@@ -1,0 +1,14 @@
+{
+  "type": "k3_diegetic:artisan_crafting",
+  "ingredient": {
+    "item": "minecraft:copper_ingot"
+  },
+  "tool": {
+    "item": "minecraft:iron_pickaxe"
+  },
+  "required_strikes": 2,
+  "result": {
+    "id": "minecraft:lightning_rod",
+    "count": 1
+  }
+}
