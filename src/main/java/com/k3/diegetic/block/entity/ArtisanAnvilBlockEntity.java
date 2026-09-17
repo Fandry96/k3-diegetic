@@ -6,6 +6,7 @@ import com.k3.diegetic.component.ModDataComponentTypes;
 import com.k3.diegetic.component.WorkstationStateComponent;
 import com.k3.diegetic.recipe.ArtisanCraftingRecipe;
 import com.k3.diegetic.recipe.ModRecipes;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.EntityType;
@@ -707,11 +708,18 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
 
     @Override
     public NbtCompound toInitialChunkDataNbt(RegistryWrapper.WrapperLookup wrapperLookup) {
-        return this.createComponentlessNbt(wrapperLookup);
+        NbtCompound nbt = super.toInitialChunkDataNbt(wrapperLookup);
+        if (!this.heldStack.isEmpty()) {
+            nbt.put("held_item", this.heldStack.encode(wrapperLookup));
+        }
+        return nbt;
     }
 
     private void markDirtyAndSync() {
         this.markDirty();
+        if (this.world != null) {
+            this.world.updateListeners(this.pos, this.getCachedState(), this.getCachedState(), Block.NOTIFY_ALL);
+        }
         if (this.world instanceof ServerWorld serverWorld) {
             serverWorld.getChunkManager().markForUpdate(this.pos);
         }

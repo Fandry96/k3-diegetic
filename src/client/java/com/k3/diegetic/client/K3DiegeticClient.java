@@ -1,7 +1,9 @@
 package com.k3.diegetic.client;
 
 import com.k3.diegetic.K3DiegeticMod;
+import com.k3.diegetic.block.ModBlocks;
 import net.fabricmc.api.ClientModInitializer;
+import net.minecraft.client.render.block.entity.BlockEntityRendererFactories;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +18,9 @@ public class K3DiegeticClient implements ClientModInitializer {
     public void onInitializeClient() {
         CLIENT_LOGGER.info("Initializing K3 Diegetic Workstation client environment.");
         
-        // Milestone 4: Client render layer registrations, entity rendering layers,
-        // particle factories, or custom block model mappings.
+        BlockEntityRendererFactories.register(
+                ModBlocks.ARTISAN_ANVIL_BLOCK_ENTITY,
+                ArtisanAnvilBlockEntityRenderer::new
+        );
     }
 }
