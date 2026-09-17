@@ -1,0 +1,78 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Headless GameTest Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Gradle Wrapper Checksum
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Setup Java 21 LTS Toolchain
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Pre-seed Headless Minecraft EULA
+        run: |
+          mkdir -p run build/gametest
+          echo "eula=true" > run/eula.txt
+          echo "eula=true" > build/gametest/eula.txt
+
+      - name: Compile and Build Mod (Fail-Fast)
+        run: ./gradlew build --stacktrace --no-daemon
+
+      - name: Execute Headless GameTest Server (Fail-Fast)
+        run: ./gradlew runGameTestServer --stacktrace --no-daemon
+
+      - name: Verify Mod Publishing Dry-Run
+        run: ./gradlew publishMods -PdryRun=true --stacktrace --no-daemon
+
+      - name: Upload GameTest Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gametest-reports
+          path: |
+            build/reports/
+            build/test-results/
+            build/gametest/logs/
+          if-no-files-found: ignore
+
+      - name: Upload Production Mod Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: k3-diegetic-artifacts
+          path: |
+            build/libs/*.jar
+          if-no-files-found: error

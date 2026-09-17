@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "k3_diegetic",
+  "version": "${version}",
+  "name": "Spark & Strike",
+  "description": "Physical, in-world anvil crafting for Minecraft 1.21.1! Place ingots and gems on the anvil, strike with tools, watch sparks fly, and forge masterwork gear—zero 2D menus!",
+  "authors": [
+    "K3 Operations Team"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Fandry96/k3-diegetic",
+    "sources": "https://github.com/Fandry96/k3-diegetic",
+    "issues": "https://github.com/Fandry96/k3-diegetic/issues"
+  },
+  "license": "MIT",
+  "icon": "assets/k3_diegetic/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.k3.diegetic.K3DiegeticMod"
+    ],
+    "client": [
+      "com.k3.diegetic.client.K3DiegeticClient"
+    ],
+    "fabric-datagen": [
+      "com.k3.diegetic.data.K3DiegeticDataGenerator"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

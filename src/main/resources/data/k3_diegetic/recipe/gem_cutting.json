@@ -1,0 +1,14 @@
+{
+  "type": "k3_diegetic:artisan_crafting",
+  "ingredient": {
+    "item": "minecraft:amethyst_shard"
+  },
+  "tool": {
+    "item": "minecraft:shears"
+  },
+  "required_strikes": 2,
+  "result": {
+    "id": "minecraft:diamond",
+    "count": 1
+  }
+}

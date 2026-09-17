@@ -1,0 +1,28 @@
+# Gradle build directories
+.gradle/
+build/
+bin/
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+.vscode/
+
+# Run directory
+run/
+runGameTestServer/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Secrets and local environment
+.env
+.env.*
+*.env
+local.properties

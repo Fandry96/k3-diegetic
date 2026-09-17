@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "k3_diegetic:block/artisan_anvil"
+    },
+    "facing=east": {
+      "model": "k3_diegetic:block/artisan_anvil",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "k3_diegetic:block/artisan_anvil",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "k3_diegetic:block/artisan_anvil",
+      "y": 270
+    }
+  }
+}

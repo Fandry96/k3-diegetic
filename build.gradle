@@ -1,0 +1,280 @@
+plugins {
+    id 'fabric-loom' version '1.7-SNAPSHOT'
+    id 'maven-publish'
+    id 'me.modmuss50.mod-publish-plugin' version '2.2.0'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Fabric'
+        url = 'https://maven.fabricmc.net/'
+    }
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDirs += ["src/main/generated"]
+        }
+    }
+    gametest {
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath
+    }
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+        "${project.mod_id}-gametest" {
+            sourceSet sourceSets.gametest
+        }
+    }
+
+    runs {
+        gameTestServer {
+            server()
+            name "Game Test Server"
+            source sourceSets.gametest
+            vmArg "-Dfabric-api.gametest=true"
+            vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.get().asFile}/test-results/gametest/junit.xml"
+            runDir "build/gametest"
+        }
+    }
+}
+
+fabricApi {
+    configureDataGeneration()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 21
+}
+
+tasks.matching { it.name == "compileClientJava" }.configureEach {
+    mustRunAfter(tasks.compileJava)
+}
+
+java {
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+def prepareGameTestServer = tasks.register("prepareGameTestServer") {
+    group = "verification"
+    description = "Pre-seeds EULA agreement and server properties for headless GameTest execution"
+    doLast {
+        def gametestDir = file("build/gametest")
+        if (!gametestDir.exists()) {
+            gametestDir.mkdirs()
+        }
+        def eulaFile = file("build/gametest/eula.txt")
+        if (!eulaFile.exists() || !eulaFile.text.contains("eula=true")) {
+            eulaFile.text = "eula=true\n"
+        }
+        def serverProps = file("build/gametest/server.properties")
+        if (!serverProps.exists()) {
+            serverProps.text = "online-mode=false\nprevent-proxy-connections=false\n"
+        }
+    }
+}
+
+tasks.matching { it.name == "runGameTestServer" }.configureEach {
+    dependsOn prepareGameTestServer
+}
+
+tasks.register("runGametest") {
+    group = "verification"
+    description = "Alias for runGameTestServer"
+    dependsOn "runGameTestServer"
+}
+
+publishMods {
+    file = tasks.remapJar.archiveFile
+    additionalFiles.from(tasks.remapSourcesJar.archiveFile)
+
+    displayName = "${project.mod_name} v${project.version} (MC ${project.minecraft_version})"
+    version = project.version.toString()
+    changelog = providers.fileContents(layout.projectDirectory.file("CHANGELOG.md")).asText
+        .orElse(providers.provider { "Release ${project.version} for Minecraft ${project.minecraft_version}" })
+    type = project.version.toString().contains("-alpha") ? ALPHA :
+           project.version.toString().contains("-beta")  ? BETA : STABLE
+    modLoaders.add("fabric")
+
+    dryRun = providers.environmentVariable("CI").getOrNull() == null ||
+             project.hasProperty("dryRun") ||
+             findProperty("dryRun") == "true"
+    maxRetries = 3
+
+    modrinth {
+        accessToken = providers.environmentVariable("MODRINTH_TOKEN")
+        projectId = providers.environmentVariable("MODRINTH_PROJECT_ID")
+            .orElse(project.findProperty("modrinth_id")?.toString() ?: "k3-diegetic")
+        minecraftVersions.add(project.minecraft_version)
+        requires "fabric-api"
+    }
+
+    curseforge {
+        accessToken = providers.environmentVariable("CURSEFORGE_API_KEY")
+        projectId = providers.environmentVariable("CURSEFORGE_PROJECT_ID")
+            .orElse(project.findProperty("curseforge_id")?.toString() ?: "1234567")
+        minecraftVersions.add(project.minecraft_version)
+        client = true
+        server = true
+        requires "fabric-api"
+    }
+
+    github {
+        accessToken = providers.environmentVariable("GITHUB_TOKEN")
+        repository = providers.environmentVariable("GITHUB_REPOSITORY")
+            .orElse(project.findProperty("github_repository")?.toString() ?: "Fandry96/k3-diegetic")
+        commitish = providers.environmentVariable("GITHUB_REF_NAME")
+            .orElse("main")
+        tagName = "v${project.version}"
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+    repositories {
+    }
+}
+
+// =========================================================================
+// ANTI-LEGACY-NBT VERIFICATION TASK (§R3 Strict Zero-Tolerance Gate)
+// =========================================================================
+
+def verifyNoLegacyNbt = tasks.register("verifyNoLegacyNbt") {
+    group = "verification"
+    description = "Scans all mod sources to ensure strict zero occurrences of legacy ItemStack NBT methods (getTag, setTag, getOrCreateTag)."
+
+    def sourceDirs = [
+        file("src/main/java"),
+        file("src/client/java"),
+        file("src/gametest/java")
+    ]
+
+    inputs.files(sourceDirs.collect { fileTree(it) })
+
+    doLast {
+        def bannedMethodPattern = ~/(\.|\b)(getTag|setTag|getOrCreateTag|getOrCreateSubTag|getSubTag)\s*\(/
+        def singleLineCommentPattern = ~/\/\/.*$/
+        def stringLiteralPattern = ~/"(?:\\.|[^"\\])*"/
+        
+        def violations = []
+        int filesScanned = 0
+
+        sourceDirs.each { dir ->
+            if (dir.exists()) {
+                dir.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+                    if (file.name.endsWith(".java")) {
+                        filesScanned++
+                        def lines = file.readLines("UTF-8")
+                        boolean inBlockComment = false
+
+                        lines.eachWithIndex { rawLine, idx ->
+                            def lineNum = idx + 1
+                            def line = rawLine
+
+                            // Multi-line block comment state machine
+                            if (inBlockComment) {
+                                if (line.contains("*/")) {
+                                    line = line.substring(line.indexOf("*/") + 2)
+                                    inBlockComment = false
+                                } else {
+                                    line = ""
+                                }
+                            }
+                            while (line.contains("/*")) {
+                                int startIdx = line.indexOf("/*")
+                                int endIdx = line.indexOf("*/", startIdx + 2)
+                                if (endIdx != -1) {
+                                    line = line.substring(0, startIdx) + line.substring(endIdx + 2)
+                                } else {
+                                    line = line.substring(0, startIdx)
+                                    inBlockComment = true
+                                    break
+                                }
+                            }
+
+                            // Strip single line comments and string literals
+                            line = line.replaceAll(singleLineCommentPattern, "")
+                            line = line.replaceAll(stringLiteralPattern, "\"\"")
+
+                            // Check for banned legacy NBT calls in remaining active code
+                            if (line =~ bannedMethodPattern) {
+                                violations << [
+                                    file: file.path.replace("\\", "/"),
+                                    line: lineNum,
+                                    snippet: rawLine.trim()
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            def sb = new StringBuilder()
+            sb.append("\n" + "=" * 80 + "\n")
+            sb.append("CRITICAL AUDIT FAILURE: Legacy ItemStack NBT API usage detected!\n")
+            sb.append("Minecraft 1.21 permanently replaced ItemStack NBT tags with Data Components.\n")
+            sb.append("Strict zero occurrences of getTag(), setTag(), or getOrCreateTag() are allowed.\n")
+            sb.append("-" * 80 + "\n")
+            violations.each { v ->
+                sb.append("  * ${v.file}:${v.line} -> ${v.snippet}\n")
+            }
+            sb.append("=" * 80 + "\n")
+            throw new GradleException(sb.toString())
+        } else {
+            logger.lifecycle(">> [Anti-Legacy-NBT Audit] PASSED: 0 violations found across ${filesScanned} Java source files.")
+        }
+    }
+}
+
+// Hook into build lifecycle: check and build fail immediately if legacy NBT is used
+tasks.matching { it.name == "check" || it.name == "build" }.configureEach {
+    dependsOn verifyNoLegacyNbt
+}
+

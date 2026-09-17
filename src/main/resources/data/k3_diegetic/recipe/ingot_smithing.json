@@ -1,0 +1,14 @@
+{
+  "type": "k3_diegetic:artisan_crafting",
+  "ingredient": {
+    "item": "minecraft:iron_ingot"
+  },
+  "tool": {
+    "item": "minecraft:iron_pickaxe"
+  },
+  "required_strikes": 3,
+  "result": {
+    "id": "minecraft:iron_sword",
+    "count": 1
+  }
+}

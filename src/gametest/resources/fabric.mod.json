@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "k3_diegetic-gametest",
+  "version": "1.0.0",
+  "name": "K3 Diegetic GameTests",
+  "description": "Headless GameTest suite for K3 Diegetic Workstation.",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": [
+      "com.k3.diegetic.gametest.K3DiegeticBootstrapTest",
+      "com.k3.diegetic.gametest.WorkstationStateComponentTest",
+      "com.k3.diegetic.gametest.ArtisanWorkstationGameTest",
+      "com.k3.diegetic.gametest.ArtisanWorkstationStressTest"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "fabric-api": "*",
+    "k3_diegetic": "*"
+  }
+}
