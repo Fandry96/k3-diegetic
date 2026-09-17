@@ -1,6 +1,7 @@
 {
   "block.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
   "item.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
+  "item.k3_diegetic.forging_hammer": "Forging Hammer",
   "recipe.k3_diegetic.artisan_crafting": "Spark & Strike Forging",
   "tooltip.k3_diegetic.recipe": "Recipe: %s",
   "tooltip.k3_diegetic.strikes": "Strikes: %s",

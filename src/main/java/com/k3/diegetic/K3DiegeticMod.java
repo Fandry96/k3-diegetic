@@ -32,8 +32,9 @@ public class K3DiegeticMod implements ModInitializer {
         // Milestone 3: Data Component Types
         ModDataComponentTypes.registerDataComponentTypes();
         
-        // Milestone 4: ModBlocks & ModRecipes
+        // Milestone 4: ModBlocks, ModItems & ModRecipes
         ModBlocks.registerModBlocks();
+        com.k3.diegetic.item.ModItems.registerModItems();
         ModRecipes.registerModRecipes();
 
         // Interaction Raycast Support (Milestone 5 / Fix):

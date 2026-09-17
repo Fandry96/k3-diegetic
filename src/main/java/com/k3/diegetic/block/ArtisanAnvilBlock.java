@@ -16,6 +16,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.state.StateManager;
 import net.minecraft.state.property.DirectionProperty;
 import net.minecraft.state.property.Properties;
+import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.ItemActionResult;
@@ -130,6 +131,7 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
             if (!stack.isEmpty()) {
                 if (!world.isClient()) {
                     anvilBe.insertItem(player, hand);
+                    player.sendMessage(Text.literal("§a[Spark & Strike] Ingot placed on anvil. Strike with a Hammer or Pickaxe!"), true);
                 }
                 return ItemActionResult.success(world.isClient());
             }
@@ -139,7 +141,10 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
         // 2. Anvil has an item: check if player is holding a crafting tool to strike
         if (anvilBe.isValidStrikeTool(stack)) {
             if (!world.isClient()) {
-                anvilBe.performStrike(player, stack);
+                boolean struck = anvilBe.performStrike(player, stack);
+                if (!struck) {
+                    player.sendMessage(Text.literal("§e[Spark & Strike] Strike with a Hammer or Pickaxe to forge!"), true);
+                }
             }
             return ItemActionResult.success(world.isClient());
         }
@@ -158,6 +163,7 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
         if (be instanceof ArtisanAnvilBlockEntity anvilBe && anvilBe.hasItem()) {
             if (!world.isClient()) {
                 anvilBe.extractItem(player);
+                player.sendMessage(Text.literal("§6[Spark & Strike] Workpiece retrieved from anvil."), true);
             }
             return ActionResult.success(world.isClient());
         }
@@ -176,6 +182,8 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
                 ItemStack mainHand = player.getMainHandStack();
                 if (anvilBe.isValidStrikeTool(mainHand)) {
                     anvilBe.performStrike(player, mainHand);
+                } else {
+                    player.sendMessage(Text.literal("§e[Spark & Strike] Strike with a Hammer or Pickaxe to forge!"), true);
                 }
             }
         }

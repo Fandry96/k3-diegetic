@@ -4,7 +4,7 @@
     "item": "minecraft:copper_ingot"
   },
   "tool": {
-    "item": "minecraft:iron_pickaxe"
+    "tag": "minecraft:pickaxes"
   },
   "required_strikes": 2,
   "result": {

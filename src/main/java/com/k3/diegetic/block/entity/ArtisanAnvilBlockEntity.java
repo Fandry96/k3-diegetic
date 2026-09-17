@@ -248,6 +248,7 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
      */
     public boolean isValidStrikeTool(ItemStack toolStack) {
         if (toolStack.isEmpty()) return false;
+        if (toolStack.isOf(com.k3.diegetic.item.ModItems.FORGING_HAMMER)) return true;
         if (this.hasItem()) {
             return findMatchingRecipe(this.heldStack, toolStack).isPresent()
                     || toolStack.getItem() instanceof MiningToolItem
@@ -261,14 +262,16 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
 
     /**
      * Queries active ArtisanCraftingRecipe for workpiece and tool.
+     * The Forging Hammer is universally accepted for all artisan recipes.
      */
     public Optional<RecipeEntry<ArtisanCraftingRecipe>> findMatchingRecipe(ItemStack workpiece, ItemStack tool) {
         if (this.world == null || workpiece.isEmpty()) return Optional.empty();
         SingleStackRecipeInput input = new SingleStackRecipeInput(workpiece);
+        boolean isHammer = tool.isOf(com.k3.diegetic.item.ModItems.FORGING_HAMMER);
         return this.world.getRecipeManager()
                 .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
                 .stream()
-                .filter(entry -> entry.value().matches(input, this.world) && entry.value().matchesTool(tool))
+                .filter(entry -> entry.value().matches(input, this.world) && (isHammer || entry.value().matchesTool(tool)))
                 .findFirst();
     }
 
@@ -480,7 +483,9 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
             displayNbt.putInt(DisplayEntity.START_INTERPOLATION_KEY, 0);
             displayNbt.putString(DisplayEntity.BILLBOARD_NBT_KEY, "fixed");
             displayNbt.putString("item_display", "fixed");
+            displayNbt.put("item", this.heldStack.encode(serverWorld.getRegistryManager()));
             itemDisplay.readNbt(displayNbt);
+            itemDisplay.getStackReference(0).set(this.heldStack.copy());
 
             serverWorld.spawnEntity(itemDisplay);
             this.displayEntityUuid = itemDisplay.getUuid();
@@ -525,7 +530,9 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
                     .ifSuccess(tag -> displayNbt.put(DisplayEntity.TRANSFORMATION_NBT_KEY, tag));
             displayNbt.putInt(DisplayEntity.INTERPOLATION_DURATION_KEY, 3);
             displayNbt.putInt(DisplayEntity.START_INTERPOLATION_KEY, 0);
+            displayNbt.put("item", this.heldStack.encode(serverWorld.getRegistryManager()));
             display.readNbt(displayNbt);
+            display.getStackReference(0).set(this.heldStack.copy());
         }
     }
 
