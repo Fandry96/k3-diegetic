@@ -2,9 +2,10 @@ package com.k3.diegetic.block.entity;
 
 import com.k3.diegetic.block.ArtisanAnvilBlock;
 import com.k3.diegetic.block.ModBlocks;
-import com.k3.diegetic.component.ModDataComponentTypes;
-import com.k3.diegetic.component.WorkstationStateComponent;
+import com.k3.diegetic.item.BlueprintItem;
+import com.k3.diegetic.item.ModItems;
 import com.k3.diegetic.recipe.ArtisanCraftingRecipe;
+import com.k3.diegetic.recipe.ArtisanRecipeInput;
 import com.k3.diegetic.recipe.ModRecipes;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -12,67 +13,76 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.ItemEntity;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.inventory.SidedInventory;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.InteractionEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.inventory.SidedInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.MiningToolItem;
 import net.minecraft.item.ShearsItem;
 import net.minecraft.item.SwordItem;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.NbtList;
 import net.minecraft.network.listener.ClientPlayPacketListener;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
 import net.minecraft.particle.ParticleTypes;
+import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.RecipeEntry;
 import net.minecraft.recipe.input.SingleStackRecipeInput;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.Text;
 import net.minecraft.util.Clearable;
 import net.minecraft.util.Hand;
 import net.minecraft.util.ItemScatterer;
-import net.minecraft.util.math.AffineTransformation;
+import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
  * Diegetic workstation BlockEntity for Artisan Anvil.
- *
- * Core Guarantees:
- * 1. PURE DIEGETIC: Zero 2D container GUI screen handlers or ExtendedScreenHandlerFactory.
- * 2. DATA COMPONENT INTEGRATION: Strict zero calls to ItemStack#getTag(), setTag(), or getOrCreateTag().
- * 3. DISPLAY ENTITY COORDINATION: Coordinates synchronized vanilla ItemDisplayEntity & InteractionEntity.
- * 4. ATOMIC WORLD CLEANUP: Block break despawns entities and scatters active items cleanly.
+ * Supports Method 2 Blueprint & Template blacksmithing:
+ * - Capacity: 1 active blueprint stencil + up to 4 staged ingredients.
+ * - Sequential placement protocol with real-time Actionbar HUD feedback.
+ * - Mistake correction: normal right-click unloads last ingredient, sneak right-click unloads blueprint.
+ * - Striking protocol: requires all ingredients; crafts output and retains blueprint for rapid batching.
+ * - Zero legacy NBT calls; modern 1.21.1 Data Components and Codecs only.
  */
 public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, SidedInventory {
 
-    /** Active workpiece item held on the workstation surface. */
-    private ItemStack heldStack = ItemStack.EMPTY;
+    public static final int MAX_STAGED_INGREDIENTS = 4;
+    public static final int INVENTORY_SIZE = 5;
 
-    /** UUID of the active visual ItemDisplayEntity. */
-    @Nullable
-    private UUID displayEntityUuid = null;
+    /** Active blueprint stencil positioned flat on the anvil top plate (Slot 0). */
+    private ItemStack blueprint = ItemStack.EMPTY;
 
-    /** UUID of the active clickable InteractionEntity. */
+    /** Ordered sequence of staged workpiece materials (Slots 1-4). */
+    private final DefaultedList<ItemStack> stagedIngredients = DefaultedList.of();
+
+    /** Number of hammer strikes completed on current batch. */
+    private int strikeCount = 0;
+
+    /** Physical thermal state metric [0.0 - 1.0]. */
+    private float thermalState = 0.0f;
+
+    /** UUID of active clickable InteractionEntity hitbox. */
     @Nullable
     private UUID interactionEntityUuid = null;
 
-    /** Cooldown ticks after a craft completes before auto-loading in-world items. */
+    /** Cooldown ticks after craft completion before auto-loading. */
     private int autoLoadCooldown = 0;
 
     public ArtisanAnvilBlockEntity(BlockPos pos, BlockState state) {
@@ -80,24 +90,56 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     }
 
     /* =========================================================================
-     * INVENTORY & STATE MANAGEMENT (SidedInventory Automation)
+     * INVENTORY & STATE ACCESSORS
      * ========================================================================= */
 
-    public boolean hasItem() {
-        return !this.heldStack.isEmpty();
+    public boolean hasBlueprint() {
+        return !this.blueprint.isEmpty();
     }
 
+    public ItemStack getBlueprint() {
+        return this.blueprint;
+    }
+
+    public DefaultedList<ItemStack> getStagedIngredients() {
+        return this.stagedIngredients;
+    }
+
+    public int getStrikeCount() {
+        return this.strikeCount;
+    }
+
+    public float getThermalState() {
+        return this.thermalState;
+    }
+
+    public boolean hasItem() {
+        return !this.blueprint.isEmpty() || !this.stagedIngredients.isEmpty();
+    }
+
+    /**
+     * Backward-compatible accessor for single-item queries.
+     */
     public ItemStack getHeldStack() {
-        return this.heldStack;
+        if (!this.blueprint.isEmpty()) {
+            return this.blueprint;
+        }
+        if (!this.stagedIngredients.isEmpty()) {
+            return this.stagedIngredients.get(0);
+        }
+        return ItemStack.EMPTY;
     }
 
     public void setHeldStack(ItemStack stack) {
-        this.setStack(0, stack);
-    }
-
-    @Nullable
-    public UUID getDisplayEntityUuid() {
-        return this.displayEntityUuid;
+        if (stack.getItem() instanceof BlueprintItem) {
+            this.blueprint = stack;
+        } else {
+            this.stagedIngredients.clear();
+            if (!stack.isEmpty()) {
+                this.stagedIngredients.add(stack);
+            }
+        }
+        this.markDirtyAndSync();
     }
 
     @Nullable
@@ -105,33 +147,52 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         return this.interactionEntityUuid;
     }
 
+    @Nullable
+    public UUID getDisplayEntityUuid() {
+        return null;
+    }
+
     @Override
     public int size() {
-        return 1;
+        return INVENTORY_SIZE;
     }
 
     @Override
     public boolean isEmpty() {
-        return this.heldStack.isEmpty();
+        return this.blueprint.isEmpty() && this.stagedIngredients.isEmpty();
     }
 
     @Override
     public ItemStack getStack(int slot) {
-        return slot == 0 ? this.heldStack : ItemStack.EMPTY;
+        if (slot == 0) {
+            return this.blueprint;
+        }
+        int idx = slot - 1;
+        if (idx >= 0 && idx < this.stagedIngredients.size()) {
+            return this.stagedIngredients.get(idx);
+        }
+        return ItemStack.EMPTY;
     }
 
     @Override
     public ItemStack removeStack(int slot, int amount) {
-        if (slot == 0 && !this.heldStack.isEmpty() && amount > 0) {
-            ItemStack split = this.heldStack.split(amount);
-            if (this.heldStack.isEmpty()) {
+        if (slot == 0 && !this.blueprint.isEmpty() && amount > 0) {
+            ItemStack split = this.blueprint.split(amount);
+            if (this.blueprint.isEmpty()) {
                 this.clear();
             } else {
                 this.markDirtyAndSync();
-                if (this.world instanceof ServerWorld serverWorld) {
-                    spawnDisplayAndInteraction(serverWorld);
-                }
             }
+            return split;
+        }
+        int idx = slot - 1;
+        if (idx >= 0 && idx < this.stagedIngredients.size() && amount > 0) {
+            ItemStack current = this.stagedIngredients.get(idx);
+            ItemStack split = current.split(amount);
+            if (current.isEmpty()) {
+                this.stagedIngredients.remove(idx);
+            }
+            this.markDirtyAndSync();
             return split;
         }
         return ItemStack.EMPTY;
@@ -139,10 +200,16 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
 
     @Override
     public ItemStack removeStack(int slot) {
-        if (slot == 0 && !this.heldStack.isEmpty()) {
-            ItemStack stack = this.heldStack;
-            this.heldStack = ItemStack.EMPTY;
+        if (slot == 0 && !this.blueprint.isEmpty()) {
+            ItemStack stack = this.blueprint;
+            this.blueprint = ItemStack.EMPTY;
             this.clear();
+            return stack;
+        }
+        int idx = slot - 1;
+        if (idx >= 0 && idx < this.stagedIngredients.size()) {
+            ItemStack stack = this.stagedIngredients.remove(idx);
+            this.markDirtyAndSync();
             return stack;
         }
         return ItemStack.EMPTY;
@@ -151,49 +218,27 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     @Override
     public void setStack(int slot, ItemStack stack) {
         if (slot == 0) {
-            if (!stack.isEmpty()) {
-                ItemStack toHold = stack.copy();
-                if (toHold.getCount() > getMaxCountPerStack()) {
-                    toHold.setCount(getMaxCountPerStack());
-                }
-                if (!toHold.contains(ModDataComponentTypes.WORKSTATION_STATE)) {
-                    WorkstationStateComponent state = WorkstationStateComponent.DEFAULT.withActive(true);
-                    if (this.world != null) {
-                        var matchOpt = this.world.getRecipeManager()
-                                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
-                                .stream()
-                                .filter(entry -> entry.value().matches(new SingleStackRecipeInput(toHold), this.world))
-                                .findFirst();
-                        if (matchOpt.isPresent()) {
-                            state = state.withRecipe(matchOpt.get().id());
-                        }
-                    }
-                    toHold.set(ModDataComponentTypes.WORKSTATION_STATE, state);
-                }
-                this.heldStack = toHold;
-                this.markDirtyAndSync();
-                if (this.world instanceof ServerWorld serverWorld) {
-                    spawnDisplayAndInteraction(serverWorld);
+            this.blueprint = stack;
+        } else {
+            int idx = slot - 1;
+            if (stack.isEmpty()) {
+                if (idx < this.stagedIngredients.size()) {
+                    this.stagedIngredients.remove(idx);
                 }
             } else {
-                this.clear();
+                if (idx < this.stagedIngredients.size()) {
+                    this.stagedIngredients.set(idx, stack);
+                } else if (this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
+                    this.stagedIngredients.add(stack);
+                }
             }
         }
+        this.markDirtyAndSync();
     }
 
     @Override
     public int getMaxCountPerStack() {
         return 1;
-    }
-
-    @Override
-    public boolean isValid(int slot, ItemStack stack) {
-        if (slot != 0 || stack.isEmpty() || this.world == null) return false;
-        SingleStackRecipeInput input = new SingleStackRecipeInput(stack);
-        return this.world.getRecipeManager()
-                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
-                .stream()
-                .anyMatch(entry -> entry.value().matches(input, this.world));
     }
 
     @Override
@@ -207,191 +252,368 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         if (side == Direction.DOWN) {
             return new int[0];
         }
-        return new int[]{0};
+        return new int[]{0, 1, 2, 3, 4};
     }
 
     @Override
     public boolean canInsert(int slot, ItemStack stack, @Nullable Direction dir) {
-        if (slot != 0 || dir == Direction.DOWN || !this.heldStack.isEmpty() || stack.isEmpty()) {
+        if (dir == Direction.DOWN || stack.isEmpty()) {
             return false;
         }
-        return isValid(slot, stack);
+        if (slot == 0 && this.blueprint.isEmpty() && stack.getItem() instanceof BlueprintItem) {
+            return true;
+        }
+        if (slot >= 1 && !this.blueprint.isEmpty() && this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
+            return true;
+        }
+        return false;
     }
 
     @Override
     public boolean canExtract(int slot, ItemStack stack, Direction dir) {
-        // Unworked workpiece is protected from being pulled out by bottom hopper
         return false;
-    }
-
-    public boolean insertItemDirectly(ItemStack stack) {
-        if (stack.isEmpty() || this.hasItem()) return false;
-        ItemStack inserted = stack.split(1);
-        this.setStack(0, inserted);
-        if (this.world != null) {
-            this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_PLACE, SoundCategory.BLOCKS, 0.7f, 1.2f);
-        }
-        return true;
     }
 
     @Override
     public void clear() {
-        this.heldStack = ItemStack.EMPTY;
+        this.blueprint = ItemStack.EMPTY;
+        this.stagedIngredients.clear();
+        this.strikeCount = 0;
+        this.thermalState = 0.0f;
         this.markDirtyAndSync();
         if (this.world instanceof ServerWorld serverWorld) {
             despawnEntities(serverWorld);
         }
     }
 
-    /**
-     * Checks if a tool is eligible to strike the active workpiece.
-     * Matches recipes or fallback tools/weapons.
-     */
+    /* =========================================================================
+     * RECIPE QUERYING & TOOL VALIDATION
+     * ========================================================================= */
+
+    public Optional<RecipeEntry<ArtisanCraftingRecipe>> findMatchingRecipe() {
+        if (this.world == null || this.blueprint.isEmpty()) {
+            return Optional.empty();
+        }
+        ArtisanRecipeInput input = new ArtisanRecipeInput(this.blueprint, this.stagedIngredients);
+        return this.world.getRecipeManager()
+                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
+                .stream()
+                .filter(entry -> entry.value().matches(input, this.world))
+                .findFirst();
+    }
+
+    public Optional<RecipeEntry<ArtisanCraftingRecipe>> findRecipeForBlueprint(ItemStack blueprintStack) {
+        if (this.world == null || blueprintStack.isEmpty()) {
+            return Optional.empty();
+        }
+        return this.world.getRecipeManager()
+                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
+                .stream()
+                .filter(entry -> entry.value().matchesBlueprint(blueprintStack))
+                .findFirst();
+    }
+
+    public Optional<RecipeEntry<ArtisanCraftingRecipe>> findMatchingRecipe(ItemStack workpiece, ItemStack tool) {
+        if (this.world == null) return Optional.empty();
+        boolean isHammer = tool.isOf(ModItems.FORGING_HAMMER);
+        return this.world.getRecipeManager()
+                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
+                .stream()
+                .filter(entry -> (entry.value().matches(new SingleStackRecipeInput(workpiece), this.world)
+                        || entry.value().matches(workpiece, tool))
+                        && (isHammer || entry.value().matchesTool(tool)))
+                .findFirst();
+    }
+
     public boolean isValidStrikeTool(ItemStack toolStack) {
         if (toolStack.isEmpty()) return false;
-        if (toolStack.isOf(com.k3.diegetic.item.ModItems.FORGING_HAMMER)) return true;
+        if (toolStack.isOf(ModItems.FORGING_HAMMER)) return true;
         if (this.hasItem()) {
-            return findMatchingRecipe(this.heldStack, toolStack).isPresent()
-                    || toolStack.getItem() instanceof MiningToolItem
-                    || toolStack.getItem() instanceof SwordItem
-                    || toolStack.getItem() instanceof ShearsItem;
+            var recipeOpt = findRecipeForBlueprint(this.blueprint);
+            if (recipeOpt.isPresent() && recipeOpt.get().value().matchesTool(toolStack)) {
+                return true;
+            }
         }
         return toolStack.getItem() instanceof MiningToolItem
                 || toolStack.getItem() instanceof SwordItem
                 || toolStack.getItem() instanceof ShearsItem;
     }
 
-    /**
-     * Queries active ArtisanCraftingRecipe for workpiece and tool.
-     * The Forging Hammer is universally accepted for all artisan recipes.
-     */
-    public Optional<RecipeEntry<ArtisanCraftingRecipe>> findMatchingRecipe(ItemStack workpiece, ItemStack tool) {
-        if (this.world == null || workpiece.isEmpty()) return Optional.empty();
-        SingleStackRecipeInput input = new SingleStackRecipeInput(workpiece);
-        boolean isHammer = tool.isOf(com.k3.diegetic.item.ModItems.FORGING_HAMMER);
-        return this.world.getRecipeManager()
-                .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
-                .stream()
-                .filter(entry -> entry.value().matches(input, this.world) && (isHammer || entry.value().matchesTool(tool)))
-                .findFirst();
+    private static String getIngredientDisplayName(Ingredient ingredient) {
+        ItemStack[] matching = ingredient.getMatchingStacks();
+        if (matching != null && matching.length > 0) {
+            return matching[0].getName().getString();
+        }
+        return "Material";
+    }
+
+    private static String formatRequirementsList(ArtisanCraftingRecipe recipe) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Ingredient ing : recipe.ingredients()) {
+            String name = getIngredientDisplayName(ing);
+            counts.put(name, counts.getOrDefault(name, 0) + 1);
+        }
+        StringBuilder sb = new StringBuilder();
+        int idx = 0;
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            if (idx > 0) sb.append(", ");
+            sb.append(entry.getValue()).append("x ").append(entry.getKey());
+            idx++;
+        }
+        return sb.toString();
     }
 
     /* =========================================================================
-     * PLAYER INTERACTION HANDLERS
+     * PLACEMENT & RETRIEVAL PROTOCOLS
      * ========================================================================= */
 
     /**
-     * Inserts 1 item from player hand onto the workstation surface.
-     * Attaches initial WorkstationStateComponent and spawns display entities.
+     * Placement Protocol:
+     * - If anvil has no blueprint: player must place a BlueprintItem first.
+     * - If blueprint is present: player inserts matching workpiece materials sequentially.
      */
     public boolean insertItem(PlayerEntity player, Hand hand) {
         ItemStack playerStack = player.getStackInHand(hand);
-        if (playerStack.isEmpty() || this.hasItem()) return false;
+        if (playerStack.isEmpty()) {
+            return false;
+        }
 
-        // Take 1 item from player
-        ItemStack inserted = playerStack.split(1);
+        // Case A: No blueprint present
+        if (this.blueprint.isEmpty()) {
+            if (playerStack.getItem() instanceof BlueprintItem) {
+                this.blueprint = playerStack.split(1);
+                this.strikeCount = 0;
+                this.thermalState = 0.0f;
+                this.markDirtyAndSync();
 
-        // Ensure modern WorkstationStateComponent is attached
-        WorkstationStateComponent state = WorkstationStateComponent.DEFAULT.withActive(true);
-        if (this.world != null) {
-            var matchOpt = this.world.getRecipeManager()
-                    .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
-                    .stream()
-                    .filter(entry -> entry.value().matches(new SingleStackRecipeInput(inserted), this.world))
-                    .findFirst();
-            if (matchOpt.isPresent()) {
-                state = state.withRecipe(matchOpt.get().id());
+                if (this.world != null) {
+                    this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_PLACE, SoundCategory.BLOCKS, 0.7f, 1.2f);
+                }
+
+                var recipeOpt = findRecipeForBlueprint(this.blueprint);
+                if (recipeOpt.isPresent()) {
+                    ArtisanCraftingRecipe recipe = recipeOpt.get().value();
+                    String reqs = formatRequirementsList(recipe);
+                    player.sendMessage(Text.literal("§a[Spark & Strike] " + this.blueprint.getName().getString()
+                            + ": Requires " + reqs + " (0/" + recipe.ingredients().size() + " loaded)"), true);
+                } else {
+                    player.sendMessage(Text.literal("§a[Spark & Strike] Blueprint placed on anvil."), true);
+                }
+
+                if (this.world instanceof ServerWorld serverWorld) {
+                    spawnInteractionEntity(serverWorld);
+                }
+                return true;
+            } else {
+                player.sendMessage(Text.literal("§e[Spark & Strike] Place a Blueprint stencil on the anvil first!"), true);
+                if (this.world != null) {
+                    this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.5f, 0.5f);
+                }
+                return false;
             }
         }
-        inserted.set(ModDataComponentTypes.WORKSTATION_STATE, state);
 
-        this.heldStack = inserted;
-        this.markDirtyAndSync();
-
-        // Spawn visual and interaction entities on server
-        if (this.world instanceof ServerWorld serverWorld) {
-            spawnDisplayAndInteraction(serverWorld);
+        // Case B: Blueprint is present -> stage sequential ingredients
+        var recipeOpt = findRecipeForBlueprint(this.blueprint);
+        if (recipeOpt.isEmpty()) {
+            player.sendMessage(Text.literal("§c[Spark & Strike] Unknown blueprint recipe!"), true);
+            return false;
         }
 
-        // Sound feedback
-        if (this.world != null) {
-            this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_PLACE, SoundCategory.BLOCKS, 0.7f, 1.2f);
+        ArtisanCraftingRecipe recipe = recipeOpt.get().value();
+        int totalNeeded = recipe.ingredients().size();
+        int currentStaged = this.stagedIngredients.size();
+
+        if (currentStaged >= totalNeeded) {
+            player.sendMessage(Text.literal("§a[Spark & Strike] (" + totalNeeded + "/" + totalNeeded
+                    + " loaded) - Ready to Forge! Strike with Hammer!"), true);
+            return false;
         }
-        return true;
+
+        Ingredient nextRequired = recipe.ingredients().get(currentStaged);
+        if (nextRequired.test(playerStack)) {
+            ItemStack inserted = playerStack.split(1);
+            this.stagedIngredients.add(inserted);
+            this.markDirtyAndSync();
+
+            if (this.world != null) {
+                this.world.playSound(null, this.pos, SoundEvents.ENTITY_ITEM_FRAME_ADD_ITEM, SoundCategory.BLOCKS, 0.8f, 1.2f);
+            }
+
+            int newCount = this.stagedIngredients.size();
+            if (newCount == totalNeeded) {
+                player.sendMessage(Text.literal("§a[Spark & Strike] (" + totalNeeded + "/" + totalNeeded
+                        + " loaded) - Ready to Forge! Strike with Hammer!"), true);
+            } else {
+                String nextName = getIngredientDisplayName(recipe.ingredients().get(newCount));
+                player.sendMessage(Text.literal("§e[Spark & Strike] (" + newCount + "/" + totalNeeded
+                        + " loaded) - Needs: " + nextName), true);
+            }
+            return true;
+        } else {
+            String expectedName = getIngredientDisplayName(nextRequired);
+            player.sendMessage(Text.literal("§c[Spark & Strike] Incorrect material! (" + currentStaged + "/" + totalNeeded
+                    + " loaded) - Needs: " + expectedName), true);
+            if (this.world != null) {
+                this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.5f, 0.6f);
+            }
+            return false;
+        }
     }
 
     /**
-     * Extracts held workpiece into player inventory or drops at player feet.
+     * Retrieval Protocol (Normal Right-Click with Empty Hand):
+     * Mistake correction: pops the LAST staged ingredient back to player.
      */
     public boolean extractItem(PlayerEntity player) {
-        if (!this.hasItem()) return false;
+        if (!this.stagedIngredients.isEmpty()) {
+            ItemStack popped = this.stagedIngredients.remove(this.stagedIngredients.size() - 1);
+            if (!player.getInventory().insertStack(popped)) {
+                player.dropItem(popped, false);
+            }
+            this.markDirtyAndSync();
 
-        ItemStack toExtract = this.heldStack.copy();
-        this.heldStack = ItemStack.EMPTY;
+            if (this.world != null) {
+                this.world.playSound(null, this.pos, SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.BLOCKS, 0.8f, 1.4f);
+            }
 
-        // Despawn display entities
+            var recipeOpt = findRecipeForBlueprint(this.blueprint);
+            if (recipeOpt.isPresent()) {
+                ArtisanCraftingRecipe recipe = recipeOpt.get().value();
+                int totalNeeded = recipe.ingredients().size();
+                int current = this.stagedIngredients.size();
+                String nextName = getIngredientDisplayName(recipe.ingredients().get(current));
+                player.sendMessage(Text.literal("§6[Spark & Strike] Retrieved " + popped.getName().getString()
+                        + " (" + current + "/" + totalNeeded + " loaded) - Needs: " + nextName), true);
+            } else {
+                player.sendMessage(Text.literal("§6[Spark & Strike] Retrieved last ingredient."), true);
+            }
+            return true;
+        } else if (!this.blueprint.isEmpty()) {
+            player.sendMessage(Text.literal("§e[Spark & Strike] No ingredients staged. Sneak + Right-Click to retrieve Blueprint."), true);
+            return false;
+        }
+        return false;
+    }
+
+    /**
+     * Retrieval Protocol (Sneak + Right-Click with Empty Hand):
+     * Pops the Blueprint stencil back to player (along with any staged ingredients).
+     */
+    public boolean extractBlueprint(PlayerEntity player) {
+        if (this.blueprint.isEmpty()) {
+            return false;
+        }
+
+        // Return any remaining staged items first so nothing is lost
+        while (!this.stagedIngredients.isEmpty()) {
+            ItemStack ing = this.stagedIngredients.remove(this.stagedIngredients.size() - 1);
+            if (!player.getInventory().insertStack(ing)) {
+                player.dropItem(ing, false);
+            }
+        }
+
+        ItemStack bp = this.blueprint.copy();
+        this.blueprint = ItemStack.EMPTY;
+        this.strikeCount = 0;
+        this.thermalState = 0.0f;
+        this.markDirtyAndSync();
+
         if (this.world instanceof ServerWorld serverWorld) {
             despawnEntities(serverWorld);
         }
 
-        if (!player.getInventory().insertStack(toExtract)) {
-            player.dropItem(toExtract, false);
+        if (!player.getInventory().insertStack(bp)) {
+            player.dropItem(bp, false);
         }
 
-        this.markDirtyAndSync();
         if (this.world != null) {
-            this.world.playSound(null, this.pos, SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.BLOCKS, 0.8f, 1.4f);
+            this.world.playSound(null, this.pos, SoundEvents.ENTITY_ITEM_PICKUP, SoundCategory.BLOCKS, 0.8f, 1.2f);
         }
+        player.sendMessage(Text.literal("§6[Spark & Strike] Blueprint retrieved from anvil."), true);
         return true;
     }
 
+    /* =========================================================================
+     * FORGING PROTOCOL & STRIKE PROGRESSION
+     * ========================================================================= */
+
     /**
-     * Advances crafting progress upon player tool strike.
-     * Emits diegetic sound, particle effects, updates display interpolation, damages tool, and crafts output.
+     * Forging Protocol:
+     * - Striking requires blueprint and ALL recipe ingredients staged.
+     * - Incomplete staging is rejected with 0 progress.
+     * - Completed craft drops result and KEEPS blueprint on anvil for rapid batching.
      */
     public boolean performStrike(PlayerEntity player, ItemStack toolStack) {
-        if (!this.hasItem() || this.world == null) return false;
+        if (this.world == null) return false;
 
-        Optional<RecipeEntry<ArtisanCraftingRecipe>> recipeOpt = findMatchingRecipe(this.heldStack, toolStack);
+        if (this.blueprint.isEmpty()) {
+            player.sendMessage(Text.literal("§e[Spark & Strike] Place a Blueprint and materials on the anvil to forge!"), true);
+            this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.5f, 0.6f);
+            return false;
+        }
+
+        var recipeOpt = findRecipeForBlueprint(this.blueprint);
         if (recipeOpt.isEmpty()) {
+            player.sendMessage(Text.literal("§c[Spark & Strike] No matching recipe for active blueprint!"), true);
+            return false;
+        }
+
+        ArtisanCraftingRecipe recipe = recipeOpt.get().value();
+        boolean matchesTool = recipe.matchesTool(toolStack) || toolStack.isOf(ModItems.FORGING_HAMMER);
+        if (!matchesTool) {
+            player.sendMessage(Text.literal("§c[Spark & Strike] Requires a Forging Hammer or valid smithing tool!"), true);
+            this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.5f, 0.6f);
+            return false;
+        }
+
+        int totalNeeded = recipe.ingredients().size();
+        if (this.stagedIngredients.size() < totalNeeded) {
+            String nextName = getIngredientDisplayName(recipe.ingredients().get(this.stagedIngredients.size()));
+            player.sendMessage(Text.literal("§c[Spark & Strike] Cannot forge: Incomplete materials! ("
+                    + this.stagedIngredients.size() + "/" + totalNeeded + " loaded) - Needs: " + nextName), true);
             this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.6f, 0.6f);
             return false;
         }
 
-        RecipeEntry<ArtisanCraftingRecipe> recipeEntry = recipeOpt.get();
-        ArtisanCraftingRecipe recipe = recipeEntry.value();
+        for (int i = 0; i < totalNeeded; i++) {
+            if (!recipe.ingredients().get(i).test(this.stagedIngredients.get(i))) {
+                player.sendMessage(Text.literal("§c[Spark & Strike] Staged materials do not match recipe!"), true);
+                return false;
+            }
+        }
 
-        // Read immutable component
-        WorkstationStateComponent current = this.heldStack.getOrDefault(
-                ModDataComponentTypes.WORKSTATION_STATE,
-                WorkstationStateComponent.DEFAULT
-        );
-
-        int currentStrikes = current.strikeCount();
-        int newStrikes = currentStrikes + 1;
-        int requiredStrikes = recipe.requiredStrikes();
-        int newProgress = (int) (((float) newStrikes / requiredStrikes) * 100);
-        float newThermal = Math.min(1.0f, current.thermalState() + 0.15f);
-
-        // Damage tool if player is not in creative mode
+        // Advance strikes
+        this.strikeCount++;
         if (!player.isCreative() && toolStack.isDamageable()) {
             toolStack.damage(1, player, EquipmentSlot.MAINHAND);
         }
+
+        int required = recipe.requiredStrikes();
+        int pct = Math.min(100, (int) (((float) this.strikeCount / required) * 100));
+        this.thermalState = Math.min(1.0f, this.thermalState + 0.15f);
 
         double x = this.pos.getX() + 0.5;
         double y = this.pos.getY() + 1.05;
         double z = this.pos.getZ() + 0.5;
 
-        if (newStrikes >= requiredStrikes) {
-            // Crafting complete: spawn output result stack
-            ItemStack resultStack = recipe.craft(
-                    new SingleStackRecipeInput(this.heldStack),
-                    this.world.getRegistryManager()
-            );
+        if (this.strikeCount >= required) {
+            // Crafting complete!
+            ArtisanRecipeInput input = new ArtisanRecipeInput(this.blueprint, this.stagedIngredients);
+            ItemStack resultStack = recipe.craft(input, this.world.getRegistryManager());
+
+            // Consume workpiece materials, KEEP blueprint on anvil for batching
+            this.stagedIngredients.clear();
+            this.strikeCount = 0;
+            this.thermalState = 0.0f;
+            this.autoLoadCooldown = 5;
+
+            ItemEntity outputEntity = new ItemEntity(this.world, x, y, z, resultStack);
+            outputEntity.setToDefaultPickupDelay();
+            this.world.spawnEntity(outputEntity);
 
             if (this.world instanceof ServerWorld serverWorld) {
-                despawnEntities(serverWorld);
-                serverWorld.spawnParticles(ParticleTypes.HAPPY_VILLAGER, x, y + 0.1, z, 12, 0.25, 0.2, 0.25, 0.02);
+                serverWorld.spawnParticles(ParticleTypes.HAPPY_VILLAGER, x, y + 0.1, z, 14, 0.25, 0.2, 0.25, 0.02);
                 serverWorld.spawnParticles(ParticleTypes.CRIT, x, y, z, 16, 0.25, 0.15, 0.25, 0.2);
                 serverWorld.spawnParticles(ParticleTypes.LAVA, x, y, z, 8, 0.2, 0.1, 0.2, 0.1);
             }
@@ -399,104 +621,45 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
             this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_LAND, SoundCategory.BLOCKS, 1.0f, 1.2f);
             this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_USE, SoundCategory.BLOCKS, 0.8f, 1.5f);
 
-            this.heldStack = ItemStack.EMPTY;
-            this.autoLoadCooldown = 5;
-
-            ItemEntity outputEntity = new ItemEntity(this.world, x, y, z, resultStack);
-            outputEntity.setToDefaultPickupDelay();
-            this.world.spawnEntity(outputEntity);
+            player.sendMessage(Text.literal("§a[Spark & Strike] Successfully forged " + resultStack.getName().getString()
+                    + "! Blueprint ready for next batch."), true);
 
             this.markDirtyAndSync();
             return true;
         } else {
             // Progressive strike
-            WorkstationStateComponent updated = current
-                    .withRecipe(recipeEntry.id())
-                    .withStrike(newStrikes, newProgress)
-                    .withThermalState(newThermal)
-                    .withActive(true);
-
-            this.heldStack.set(ModDataComponentTypes.WORKSTATION_STATE, updated);
-            this.markDirtyAndSync();
-
-            float pitchProgress = requiredStrikes > 1 ? (float) newStrikes / requiredStrikes : 0.5f;
+            float pitchProgress = required > 1 ? (float) this.strikeCount / required : 0.5f;
             float modulatedPitch = Math.min(1.6f, 0.85f + (pitchProgress * 0.55f));
 
-            if (newStrikes == 1) {
-                this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_HIT, SoundCategory.BLOCKS, 0.9f, modulatedPitch);
-            } else {
-                this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_USE, SoundCategory.BLOCKS, 0.9f, modulatedPitch);
-            }
+            this.world.playSound(null, this.pos, SoundEvents.BLOCK_ANVIL_USE, SoundCategory.BLOCKS, 0.9f, modulatedPitch);
 
             if (this.world instanceof ServerWorld serverWorld) {
                 serverWorld.spawnParticles(ParticleTypes.CRIT, x, y, z, 8, 0.15, 0.08, 0.15, 0.12);
                 serverWorld.spawnParticles(ParticleTypes.LAVA, x, y, z, 4, 0.1, 0.05, 0.1, 0.08);
-                updateDisplayTransform(serverWorld, newStrikes);
             }
 
+            player.sendMessage(Text.literal("§6[Spark & Strike] Forging... Strike " + this.strikeCount + "/" + required
+                    + " (" + pct + "%)"), true);
+
+            this.markDirtyAndSync();
             return true;
         }
     }
 
-    /**
-     * Alias for performStrike.
-     */
-    public boolean handleToolStrike(PlayerEntity player, ItemStack toolStack) {
-        return performStrike(player, toolStack);
-    }
-
     /* =========================================================================
-     * DISPLAY & INTERACTION ENTITY COORDINATION (Pattern #7)
+     * INTERACTION ENTITY COORDINATION
      * ========================================================================= */
 
-    private void spawnDisplayAndInteraction(ServerWorld serverWorld) {
+    private void spawnInteractionEntity(ServerWorld serverWorld) {
         despawnEntities(serverWorld);
-
-        if (this.heldStack.isEmpty()) return;
 
         double x = this.pos.getX() + 0.5;
         double y = this.pos.getY() + 1.02;
         double z = this.pos.getZ() + 0.5;
 
-        Direction facing = this.getCachedState().contains(ArtisanAnvilBlock.FACING)
-                ? this.getCachedState().get(ArtisanAnvilBlock.FACING)
-                : Direction.NORTH;
-
-        // 1. Spawning floating preview ItemDisplayEntity
-        DisplayEntity.ItemDisplayEntity itemDisplay = EntityType.ITEM_DISPLAY.create(serverWorld);
-        if (itemDisplay != null) {
-            itemDisplay.setPos(x, y, z);
-            itemDisplay.getStackReference(0).set(this.heldStack.copy());
-
-            AffineTransformation transform = new AffineTransformation(
-                    new Vector3f(0f, 0.02f, 0f),
-                    new Quaternionf()
-                            .rotateY((float) Math.toRadians(-facing.asRotation()))
-                            .rotateX((float) Math.toRadians(90f)),
-                    new Vector3f(0.6f, 0.6f, 0.6f),
-                    null
-            );
-
-            NbtCompound displayNbt = new NbtCompound();
-            AffineTransformation.CODEC.encodeStart(NbtOps.INSTANCE, transform)
-                    .ifSuccess(tag -> displayNbt.put(DisplayEntity.TRANSFORMATION_NBT_KEY, tag));
-            displayNbt.putInt(DisplayEntity.INTERPOLATION_DURATION_KEY, 5);
-            displayNbt.putInt(DisplayEntity.START_INTERPOLATION_KEY, 0);
-            displayNbt.putString(DisplayEntity.BILLBOARD_NBT_KEY, "fixed");
-            displayNbt.putString("item_display", "fixed");
-            displayNbt.put("item", this.heldStack.encode(serverWorld.getRegistryManager()));
-            itemDisplay.readNbt(displayNbt);
-            itemDisplay.getStackReference(0).set(this.heldStack.copy());
-
-            serverWorld.spawnEntity(itemDisplay);
-            this.displayEntityUuid = itemDisplay.getUuid();
-        }
-
-        // 2. Spawn invisible InteractionEntity hitbox
         InteractionEntity interaction = EntityType.INTERACTION.create(serverWorld);
         if (interaction != null) {
             interaction.setPos(x, y - 0.2, z);
-
             NbtCompound interactionNbt = new NbtCompound();
             interactionNbt.putFloat("width", 0.8f);
             interactionNbt.putFloat("height", 0.6f);
@@ -508,49 +671,13 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         }
     }
 
-    private void updateDisplayTransform(ServerWorld serverWorld, int strikes) {
-        DisplayEntity.ItemDisplayEntity display = findDisplayEntity(serverWorld);
-        if (display != null) {
-            display.getStackReference(0).set(this.heldStack.copy());
-            Direction facing = this.getCachedState().contains(ArtisanAnvilBlock.FACING)
-                    ? this.getCachedState().get(ArtisanAnvilBlock.FACING)
-                    : Direction.NORTH;
-            float wobble = (strikes % 2 == 0 ? 0.05f : -0.05f);
-            AffineTransformation transform = new AffineTransformation(
-                    new Vector3f(0f, 0.02f, 0f),
-                    new Quaternionf()
-                            .rotateY((float) Math.toRadians(-facing.asRotation()))
-                            .rotateX((float) Math.toRadians(90f))
-                            .rotateZ(wobble),
-                    new Vector3f(0.6f, 0.6f, 0.6f),
-                    null
-            );
-
-            NbtCompound displayNbt = new NbtCompound();
-            AffineTransformation.CODEC.encodeStart(NbtOps.INSTANCE, transform)
-                    .ifSuccess(tag -> displayNbt.put(DisplayEntity.TRANSFORMATION_NBT_KEY, tag));
-            displayNbt.putInt(DisplayEntity.INTERPOLATION_DURATION_KEY, 3);
-            displayNbt.putInt(DisplayEntity.START_INTERPOLATION_KEY, 0);
-            displayNbt.put("item", this.heldStack.encode(serverWorld.getRegistryManager()));
-            display.readNbt(displayNbt);
-            display.getStackReference(0).set(this.heldStack.copy());
-        }
-    }
-
     public void despawnEntities(ServerWorld serverWorld) {
-        if (this.displayEntityUuid != null) {
-            DisplayEntity.ItemDisplayEntity display = findDisplayEntity(serverWorld);
-            if (display != null) display.discard();
-            this.displayEntityUuid = null;
-        }
-
         if (this.interactionEntityUuid != null) {
             InteractionEntity interaction = findInteractionEntity(serverWorld);
             if (interaction != null) interaction.discard();
             this.interactionEntityUuid = null;
         }
 
-        // Fallback: sweep local AABB bounding box to guarantee ZERO ghost entity leaks
         Box searchBox = new Box(this.pos).expand(1.2);
         List<DisplayEntity.ItemDisplayEntity> displays = serverWorld.getEntitiesByClass(
                 DisplayEntity.ItemDisplayEntity.class, searchBox, e -> true);
@@ -559,15 +686,6 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         List<InteractionEntity> interactions = serverWorld.getEntitiesByClass(
                 InteractionEntity.class, searchBox, e -> true);
         interactions.forEach(InteractionEntity::discard);
-    }
-
-    @Nullable
-    private DisplayEntity.ItemDisplayEntity findDisplayEntity(ServerWorld serverWorld) {
-        if (this.displayEntityUuid == null) return null;
-        if (serverWorld.getEntity(this.displayEntityUuid) instanceof DisplayEntity.ItemDisplayEntity display) {
-            return display;
-        }
-        return null;
     }
 
     @Nullable
@@ -580,29 +698,33 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     }
 
     /**
-     * Invoked by ArtisanAnvilBlock#onStateReplaced when block is broken.
-     * Guarantees atomic world cleanup: despawns entities and drops active workpiece.
+     * Invoked on block destruction for atomic cleanup with zero item or entity leaks.
      */
     public void cleanupOnBreak() {
         if (this.world instanceof ServerWorld serverWorld) {
             despawnEntities(serverWorld);
         }
 
-        if (!this.heldStack.isEmpty() && this.world != null) {
-            ItemScatterer.spawn(
-                    this.world,
-                    this.pos.getX() + 0.5,
-                    this.pos.getY() + 0.5,
-                    this.pos.getZ() + 0.5,
-                    this.heldStack.copy()
-            );
-            this.heldStack = ItemStack.EMPTY;
+        if (this.world != null) {
+            double x = this.pos.getX() + 0.5;
+            double y = this.pos.getY() + 0.5;
+            double z = this.pos.getZ() + 0.5;
+
+            if (!this.blueprint.isEmpty()) {
+                ItemScatterer.spawn(this.world, x, y, z, this.blueprint.copy());
+                this.blueprint = ItemStack.EMPTY;
+            }
+            for (ItemStack stack : this.stagedIngredients) {
+                if (!stack.isEmpty()) {
+                    ItemScatterer.spawn(this.world, x, y, z, stack.copy());
+                }
+            }
+            this.stagedIngredients.clear();
         }
     }
 
     /**
-     * Server tick enforcing self-healing reconciliation against chunk loads
-     * and in-world item entity auto-loading (Dropper, water stream, player drop).
+     * Server tick handling interaction entity persistence and auto-load cooldown.
      */
     public static void tick(World world, BlockPos pos, BlockState state, ArtisanAnvilBlockEntity be) {
         if (!(world instanceof ServerWorld serverWorld)) return;
@@ -611,49 +733,9 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
             be.autoLoadCooldown--;
         }
 
-        if (!be.heldStack.isEmpty()) {
-            boolean needsUpdate = false;
-            if (be.displayEntityUuid == null || serverWorld.getEntity(be.displayEntityUuid) == null) {
-                needsUpdate = true;
-            }
+        if (!be.blueprint.isEmpty()) {
             if (be.interactionEntityUuid == null || serverWorld.getEntity(be.interactionEntityUuid) == null) {
-                needsUpdate = true;
-            }
-            if (needsUpdate) {
-                be.spawnDisplayAndInteraction(serverWorld);
-            }
-        } else if (be.autoLoadCooldown == 0) {
-            // Check for floating ItemEntity above the anvil to auto-load (Dropper, water stream, player drop)
-            Box pickupBox = new Box(
-                    pos.getX() - 0.1, pos.getY() + 0.6, pos.getZ() - 0.1,
-                    pos.getX() + 1.1, pos.getY() + 1.6, pos.getZ() + 1.1
-            );
-            List<ItemEntity> items = serverWorld.getEntitiesByClass(
-                    ItemEntity.class,
-                    pickupBox,
-                    entity -> !entity.isRemoved() && entity.isAlive() && !entity.getStack().isEmpty()
-            );
-
-            for (ItemEntity itemEntity : items) {
-                ItemStack entityStack = itemEntity.getStack();
-                SingleStackRecipeInput input = new SingleStackRecipeInput(entityStack);
-                boolean matches = serverWorld.getRecipeManager()
-                        .listAllOfType(ModRecipes.ARTISAN_CRAFTING_TYPE)
-                        .stream()
-                        .anyMatch(entry -> entry.value().matches(input, serverWorld));
-
-                if (matches) {
-                    ItemStack inserted = entityStack.split(1);
-                    if (entityStack.isEmpty()) {
-                        itemEntity.discard();
-                    } else {
-                        itemEntity.setStack(entityStack);
-                    }
-
-                    be.setStack(0, inserted);
-                    serverWorld.playSound(null, pos, SoundEvents.BLOCK_ANVIL_PLACE, SoundCategory.BLOCKS, 0.7f, 1.2f);
-                    break;
-                }
+                be.spawnInteractionEntity(serverWorld);
             }
         }
     }
@@ -666,17 +748,34 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     public void readNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup wrapperLookup) {
         super.readNbt(nbt, wrapperLookup);
 
-        if (nbt.contains("held_item", NbtElement.COMPOUND_TYPE)) {
-            this.heldStack = ItemStack.fromNbtOrEmpty(wrapperLookup, nbt.getCompound("held_item"));
+        if (nbt.contains("blueprint", NbtElement.COMPOUND_TYPE)) {
+            this.blueprint = ItemStack.fromNbtOrEmpty(wrapperLookup, nbt.getCompound("blueprint"));
+        } else if (nbt.contains("held_item", NbtElement.COMPOUND_TYPE)) {
+            ItemStack legacy = ItemStack.fromNbtOrEmpty(wrapperLookup, nbt.getCompound("held_item"));
+            if (legacy.getItem() instanceof BlueprintItem) {
+                this.blueprint = legacy;
+            } else if (!legacy.isEmpty()) {
+                this.stagedIngredients.clear();
+                this.stagedIngredients.add(legacy);
+            }
         } else {
-            this.heldStack = ItemStack.EMPTY;
+            this.blueprint = ItemStack.EMPTY;
         }
 
-        if (nbt.containsUuid("display_uuid")) {
-            this.displayEntityUuid = nbt.getUuid("display_uuid");
-        } else {
-            this.displayEntityUuid = null;
+        this.stagedIngredients.clear();
+        if (nbt.contains("staged_ingredients", NbtElement.LIST_TYPE)) {
+            NbtList list = nbt.getList("staged_ingredients", NbtElement.COMPOUND_TYPE);
+            for (int i = 0; i < list.size(); i++) {
+                ItemStack stack = ItemStack.fromNbtOrEmpty(wrapperLookup, list.getCompound(i));
+                if (!stack.isEmpty()) {
+                    this.stagedIngredients.add(stack);
+                }
+            }
         }
+
+        this.strikeCount = nbt.getInt("strike_count");
+        this.thermalState = nbt.getFloat("thermal_state");
+
         if (nbt.containsUuid("interaction_uuid")) {
             this.interactionEntityUuid = nbt.getUuid("interaction_uuid");
         } else {
@@ -688,13 +787,21 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     protected void writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup wrapperLookup) {
         super.writeNbt(nbt, wrapperLookup);
 
-        if (!this.heldStack.isEmpty()) {
-            nbt.put("held_item", this.heldStack.encode(wrapperLookup));
+        if (!this.blueprint.isEmpty()) {
+            nbt.put("blueprint", this.blueprint.encode(wrapperLookup));
         }
 
-        if (this.displayEntityUuid != null) {
-            nbt.putUuid("display_uuid", this.displayEntityUuid);
+        if (!this.stagedIngredients.isEmpty()) {
+            NbtList list = new NbtList();
+            for (ItemStack stack : this.stagedIngredients) {
+                list.add(stack.encode(wrapperLookup));
+            }
+            nbt.put("staged_ingredients", list);
         }
+
+        nbt.putInt("strike_count", this.strikeCount);
+        nbt.putFloat("thermal_state", this.thermalState);
+
         if (this.interactionEntityUuid != null) {
             nbt.putUuid("interaction_uuid", this.interactionEntityUuid);
         }
@@ -709,9 +816,18 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     @Override
     public NbtCompound toInitialChunkDataNbt(RegistryWrapper.WrapperLookup wrapperLookup) {
         NbtCompound nbt = super.toInitialChunkDataNbt(wrapperLookup);
-        if (!this.heldStack.isEmpty()) {
-            nbt.put("held_item", this.heldStack.encode(wrapperLookup));
+        if (!this.blueprint.isEmpty()) {
+            nbt.put("blueprint", this.blueprint.encode(wrapperLookup));
         }
+        if (!this.stagedIngredients.isEmpty()) {
+            NbtList list = new NbtList();
+            for (ItemStack stack : this.stagedIngredients) {
+                list.add(stack.encode(wrapperLookup));
+            }
+            nbt.put("staged_ingredients", list);
+        }
+        nbt.putInt("strike_count", this.strikeCount);
+        nbt.putFloat("thermal_state", this.thermalState);
         return nbt;
     }
 

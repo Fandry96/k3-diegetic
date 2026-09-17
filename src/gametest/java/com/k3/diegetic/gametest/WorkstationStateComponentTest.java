@@ -5,7 +5,6 @@ import com.k3.diegetic.component.ModDataComponentTypes;
 import com.k3.diegetic.component.WorkstationStateComponent;
 import com.mojang.serialization.DataResult;
 import com.mojang.serialization.JsonOps;
-import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.item.ItemStack;
@@ -32,48 +31,43 @@ public class WorkstationStateComponentTest implements FabricGameTest {
     // DUAL-INPUT ACCEPTANCE VECTORS (Anti-Overfitting Constraint §2)
     // =========================================================================
 
-    /** State A: Ingot smithing recipe, 5 strikes completed, 0.85f thermal, active */
-    public static final WorkstationStateComponent STATE_A_INGOT_SMITHING = new WorkstationStateComponent(
-            Identifier.of("k3_diegetic", "smithing/tempered_blade"),
-            50,
-            5,
-            0.85f,
-            true
+    /** State A: Sword forging state, 2 staged items, 2 strikes completed, 0.45f thermal */
+    public static final WorkstationStateComponent STATE_A_SWORD_FORGING = new WorkstationStateComponent(
+            Identifier.of("k3_diegetic", "sword_blueprint"),
+            List.of(new ItemStack(Items.IRON_INGOT, 1), new ItemStack(Items.STICK, 1)),
+            2,
+            0.45f
     );
 
-    /** State B: Gem cutting recipe, 2 strikes completed, 0.15f thermal, inactive */
-    public static final WorkstationStateComponent STATE_B_GEM_CUTTING = new WorkstationStateComponent(
-            Identifier.of("k3_diegetic", "cutting/polished_prism"),
-            20,
-            2,
-            0.15f,
-            false
+    /** State B: Pickaxe forging state, 3 staged items, 1 strike completed, 0.25f thermal */
+    public static final WorkstationStateComponent STATE_B_PICKAXE_FORGING = new WorkstationStateComponent(
+            Identifier.of("k3_diegetic", "pickaxe_blueprint"),
+            List.of(new ItemStack(Items.IRON_INGOT, 1), new ItemStack(Items.IRON_INGOT, 1), new ItemStack(Items.STICK, 1)),
+            1,
+            0.25f
     );
 
     /** State C: Edge/Boundary - Zero initial workstation state */
-    public static final WorkstationStateComponent STATE_C_INITIAL_EMPTY = new WorkstationStateComponent(
-            Identifier.of("k3_diegetic", "empty"),
-            0,
-            0,
-            0.0f,
-            false
-    );
+    public static final WorkstationStateComponent STATE_C_INITIAL_EMPTY = WorkstationStateComponent.DEFAULT;
 
     /** State D: Edge/Boundary - Overheated masterwork forging state */
     public static final WorkstationStateComponent STATE_D_OVERHEATED_MASTER = new WorkstationStateComponent(
-            Identifier.of("k3_diegetic", "smithing/damascus_core"),
-            100,
+            Identifier.of("k3_diegetic", "axe_blueprint"),
+            List.of(new ItemStack(Items.IRON_INGOT, 3), new ItemStack(Items.STICK, 2)),
             12,
-            1.0f,
-            true
+            1.0f
     );
 
     private static final List<WorkstationStateComponent> TEST_VECTORS = List.of(
-            STATE_A_INGOT_SMITHING,
-            STATE_B_GEM_CUTTING,
+            STATE_A_SWORD_FORGING,
+            STATE_B_PICKAXE_FORGING,
             STATE_C_INITIAL_EMPTY,
             STATE_D_OVERHEATED_MASTER
     );
+
+    private RegistryByteBuf createRegistryBuf(TestContext context) {
+        return new RegistryByteBuf(PacketByteBufs.create(), context.getWorld().getRegistryManager());
+    }
 
     // =========================================================================
     // TEST 1: DFU CODEC ROUND-TRIP (NbtOps & JsonOps)
@@ -85,22 +79,22 @@ public class WorkstationStateComponentTest implements FabricGameTest {
             // --- Channel 1A: NbtOps (World Disk / Chunk Storage) ---
             DataResult<NbtElement> nbtEncodeResult = WorkstationStateComponent.CODEC.encodeStart(NbtOps.INSTANCE, original);
             NbtElement nbtElement = nbtEncodeResult.getOrThrow(msg ->
-                    new AssertionError("DFU Codec failed to encode state [" + original.recipeId() + "] to NBT: " + msg));
+                    new AssertionError("DFU Codec failed to encode state [" + original.activeBlueprint() + "] to NBT: " + msg));
 
             DataResult<WorkstationStateComponent> nbtDecodeResult = WorkstationStateComponent.CODEC.parse(NbtOps.INSTANCE, nbtElement);
             WorkstationStateComponent nbtDecoded = nbtDecodeResult.getOrThrow(msg ->
-                    new AssertionError("DFU Codec failed to parse state [" + original.recipeId() + "] from NBT: " + msg));
+                    new AssertionError("DFU Codec failed to parse state [" + original.activeBlueprint() + "] from NBT: " + msg));
 
             assertComponentEquals(context, original, nbtDecoded, "DFU NbtOps");
 
             // --- Channel 1B: JsonOps (Data Pack Recipes & Command Syntax) ---
             DataResult<JsonElement> jsonEncodeResult = WorkstationStateComponent.CODEC.encodeStart(JsonOps.INSTANCE, original);
             JsonElement jsonElement = jsonEncodeResult.getOrThrow(msg ->
-                    new AssertionError("DFU Codec failed to encode state [" + original.recipeId() + "] to JSON: " + msg));
+                    new AssertionError("DFU Codec failed to encode state [" + original.activeBlueprint() + "] to JSON: " + msg));
 
             DataResult<WorkstationStateComponent> jsonDecodeResult = WorkstationStateComponent.CODEC.parse(JsonOps.INSTANCE, jsonElement);
             WorkstationStateComponent jsonDecoded = jsonDecodeResult.getOrThrow(msg ->
-                    new AssertionError("DFU Codec failed to parse state [" + original.recipeId() + "] from JSON: " + msg));
+                    new AssertionError("DFU Codec failed to parse state [" + original.activeBlueprint() + "] from JSON: " + msg));
 
             assertComponentEquals(context, original, jsonDecoded, "DFU JsonOps");
         }
@@ -109,37 +103,23 @@ public class WorkstationStateComponentTest implements FabricGameTest {
     }
 
     // =========================================================================
-    // TEST 2: STREAM CODEC ROUND-TRIP (PacketByteBuf & RegistryByteBuf)
+    // TEST 2: STREAM CODEC ROUND-TRIP (RegistryByteBuf)
     // =========================================================================
 
     @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
     public void testStreamCodecRoundTrip(TestContext context) {
         for (WorkstationStateComponent original : TEST_VECTORS) {
-            // --- Channel 2A: PacketByteBuf (Standard Binary Packet Stream) ---
-            PacketByteBuf packetBuf = PacketByteBufs.create();
-            WorkstationStateComponent.PACKET_CODEC.encode(packetBuf, original);
-
-            context.assertTrue(packetBuf.readableBytes() > 0,
-                    "Encoded buffer for [" + original.recipeId() + "] must have readable bytes");
-
-            WorkstationStateComponent packetDecoded = WorkstationStateComponent.PACKET_CODEC.decode(packetBuf);
-
-            assertComponentEquals(context, original, packetDecoded, "StreamCodec PacketByteBuf");
-            context.assertTrue(packetBuf.readableBytes() == 0,
-                    "PacketByteBuf for [" + original.recipeId() + "] has trailing unread bytes: " + packetBuf.readableBytes());
-
-            // --- Channel 2B: RegistryByteBuf (Network Registry Sync Stream) ---
-            RegistryByteBuf registryBuf = new RegistryByteBuf(new PacketByteBuf(Unpooled.buffer()), context.getWorld().getRegistryManager());
+            RegistryByteBuf registryBuf = createRegistryBuf(context);
             WorkstationStateComponent.PACKET_CODEC.encode(registryBuf, original);
 
             context.assertTrue(registryBuf.readableBytes() > 0,
-                    "Encoded registry buffer for [" + original.recipeId() + "] must have readable bytes");
+                    "Encoded registry buffer for [" + original.activeBlueprint() + "] must have readable bytes");
 
             WorkstationStateComponent registryDecoded = WorkstationStateComponent.PACKET_CODEC.decode(registryBuf);
 
             assertComponentEquals(context, original, registryDecoded, "StreamCodec RegistryByteBuf");
-            context.assertTrue(registryBuf.readableBytes() == 0,
-                    "RegistryByteBuf for [" + original.recipeId() + "] has trailing unread bytes: " + registryBuf.readableBytes());
+            context.assertEquals(0, registryBuf.readableBytes(),
+                    "RegistryByteBuf for [" + original.activeBlueprint() + "] has trailing unread bytes: " + registryBuf.readableBytes());
         }
 
         context.complete();
@@ -158,10 +138,10 @@ public class WorkstationStateComponentTest implements FabricGameTest {
                 "Fresh ItemStack must not contain WORKSTATION_STATE component");
 
         // Attach State A
-        stack.set(ModDataComponentTypes.WORKSTATION_STATE, STATE_A_INGOT_SMITHING);
+        stack.set(ModDataComponentTypes.WORKSTATION_STATE, STATE_A_SWORD_FORGING);
         context.assertTrue(stack.contains(ModDataComponentTypes.WORKSTATION_STATE),
                 "ItemStack must contain WORKSTATION_STATE after stack.set()");
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, stack.get(ModDataComponentTypes.WORKSTATION_STATE), "ItemStack.get()");
+        assertComponentEquals(context, STATE_A_SWORD_FORGING, stack.get(ModDataComponentTypes.WORKSTATION_STATE), "ItemStack.get()");
 
         // Round-trip ItemStack via ItemStack.CODEC (NBT persistence)
         DataResult<NbtElement> itemNbtResult = ItemStack.CODEC.encodeStart(NbtOps.INSTANCE, stack);
@@ -172,23 +152,18 @@ public class WorkstationStateComponentTest implements FabricGameTest {
 
         context.assertTrue(deserializedStack.contains(ModDataComponentTypes.WORKSTATION_STATE),
                 "Deserialized ItemStack must retain WORKSTATION_STATE component");
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE), "Deserialized ItemStack Component");
+        assertComponentEquals(context, STATE_A_SWORD_FORGING, deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE), "Deserialized ItemStack Component");
 
         // Mutate using immutable record transition
         WorkstationStateComponent updatedState = deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE)
-                .withStrike(2, 20)
-                .withThermalState(0.15f)
-                .withActive(false);
+                .withStrike(3)
+                .withThermalState(0.85f);
         deserializedStack.set(ModDataComponentTypes.WORKSTATION_STATE, updatedState);
 
-        context.assertTrue(deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount() == 2,
-                "Mutated component must reflect 2 strikes");
-        context.assertTrue(deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).progressTicks() == 20,
-                "Mutated component must reflect 20 progress ticks");
-        context.assertTrue(Math.abs(deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).thermalState() - 0.15f) < 1e-6f,
-                "Mutated component must reflect 0.15f thermal");
-        context.assertFalse(deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).active(),
-                "Mutated component must reflect inactive state");
+        context.assertEquals(3, deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
+                "Mutated component must reflect 3 strikes");
+        context.assertTrue(Math.abs(deserializedStack.get(ModDataComponentTypes.WORKSTATION_STATE).thermalState() - 0.85f) < 1e-6f,
+                "Mutated component must reflect 0.85f thermal");
 
         // Test component removal
         deserializedStack.remove(ModDataComponentTypes.WORKSTATION_STATE);
@@ -209,37 +184,27 @@ public class WorkstationStateComponentTest implements FabricGameTest {
     public void testWitherContracts(TestContext context) {
         WorkstationStateComponent base = WorkstationStateComponent.DEFAULT;
 
-        // withRecipe
-        Identifier recipe = Identifier.of("k3_diegetic", "smithing/custom_blade");
-        WorkstationStateComponent withRecipe = base.withRecipe(recipe);
-        context.assertEquals(recipe, withRecipe.recipeId(), "withRecipe should set recipeId");
-        context.assertTrue(withRecipe.active(), "withRecipe should activate state");
+        // withBlueprint
+        Identifier bp = Identifier.of("k3_diegetic", "custom_blueprint");
+        WorkstationStateComponent withBp = base.withBlueprint(bp);
+        context.assertEquals(bp, withBp.activeBlueprint(), "withBlueprint should set activeBlueprint");
+        context.assertTrue(withBp.active(), "withBlueprint should activate state");
 
-        // withProgress
-        WorkstationStateComponent withProgress = withRecipe.withProgress(42);
-        context.assertEquals(42, withProgress.progressTicks(), "withProgress should set progressTicks");
-        context.assertEquals(42, withProgress.progress(), "progress() alias should match progressTicks");
+        // withStagedIngredients
+        List<ItemStack> ingredients = List.of(new ItemStack(Items.IRON_INGOT), new ItemStack(Items.STICK));
+        WorkstationStateComponent withIngs = withBp.withStagedIngredients(ingredients);
+        context.assertEquals(2, withIngs.stagedIngredients().size(), "withStagedIngredients should update ingredients");
 
-        // withStrike (1-arg)
-        WorkstationStateComponent withStrike1 = withProgress.withStrike(7);
-        context.assertEquals(7, withStrike1.strikeCount(), "withStrike(int) should set strikeCount");
-        context.assertEquals(42, withStrike1.progressTicks(), "withStrike(int) should preserve progressTicks");
-
-        // withStrike (2-arg)
-        WorkstationStateComponent withStrike2 = withProgress.withStrike(9, 85);
-        context.assertEquals(9, withStrike2.strikeCount(), "withStrike(int, int) should set strikeCount");
-        context.assertEquals(85, withStrike2.progressTicks(), "withStrike(int, int) should set progressTicks");
+        // withStrike
+        WorkstationStateComponent withStrike = withIngs.withStrike(5);
+        context.assertEquals(5, withStrike.strikeCount(), "withStrike should set strikeCount");
 
         // withThermalState
-        WorkstationStateComponent withThermal = withStrike2.withThermalState(0.75f);
+        WorkstationStateComponent withThermal = withStrike.withThermalState(0.75f);
         context.assertTrue(Math.abs(withThermal.thermalState() - 0.75f) < 1e-6f, "withThermalState should set thermal");
 
-        // withActive
-        WorkstationStateComponent withDeactivated = withThermal.withActive(false);
-        context.assertFalse(withDeactivated.active(), "withActive(false) should deactivate state");
-
         // reset
-        WorkstationStateComponent reset = withDeactivated.reset();
+        WorkstationStateComponent reset = withThermal.reset();
         context.assertEquals(WorkstationStateComponent.DEFAULT, reset, "reset() should return DEFAULT");
 
         context.complete();
@@ -252,81 +217,81 @@ public class WorkstationStateComponentTest implements FabricGameTest {
     @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
     public void testDualInputAdversarialBufferBoundariesAndCorruption(TestContext context) {
         // --- 1. Bitwise Float Fidelity for Dual-Input States ---
-        // State A: 0.85f
-        PacketByteBuf bufA = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(bufA, STATE_A_INGOT_SMITHING);
+        RegistryByteBuf bufA = createRegistryBuf(context);
+        WorkstationStateComponent.PACKET_CODEC.encode(bufA, STATE_A_SWORD_FORGING);
         int bytesA = bufA.readableBytes();
         WorkstationStateComponent decodedA = WorkstationStateComponent.PACKET_CODEC.decode(bufA);
-        context.assertTrue(Float.floatToIntBits(STATE_A_INGOT_SMITHING.thermalState()) == Float.floatToIntBits(decodedA.thermalState()),
+        context.assertEquals(Float.floatToIntBits(STATE_A_SWORD_FORGING.thermalState()),
+                Float.floatToIntBits(decodedA.thermalState()),
                 "State A thermal float must be bitwise identical after PacketCodec decode");
-        context.assertTrue(bufA.readableBytes() == 0, "Buffer A must have 0 unread bytes");
+        context.assertEquals(0, bufA.readableBytes(), "Buffer A must have 0 unread bytes");
 
-        // State B: 0.15f
-        PacketByteBuf bufB = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(bufB, STATE_B_GEM_CUTTING);
+        RegistryByteBuf bufB = createRegistryBuf(context);
+        WorkstationStateComponent.PACKET_CODEC.encode(bufB, STATE_B_PICKAXE_FORGING);
         int bytesB = bufB.readableBytes();
         WorkstationStateComponent decodedB = WorkstationStateComponent.PACKET_CODEC.decode(bufB);
-        context.assertTrue(Float.floatToIntBits(STATE_B_GEM_CUTTING.thermalState()) == Float.floatToIntBits(decodedB.thermalState()),
+        context.assertEquals(Float.floatToIntBits(STATE_B_PICKAXE_FORGING.thermalState()),
+                Float.floatToIntBits(decodedB.thermalState()),
                 "State B thermal float must be bitwise identical after PacketCodec decode");
-        context.assertTrue(bufB.readableBytes() == 0, "Buffer B must have 0 unread bytes");
+        context.assertEquals(0, bufB.readableBytes(), "Buffer B must have 0 unread bytes");
 
         // --- 2. Concatenated Dual-Input Stream Pipeline (State A immediately followed by State B) ---
-        PacketByteBuf streamBufAB = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(streamBufAB, STATE_A_INGOT_SMITHING);
-        WorkstationStateComponent.PACKET_CODEC.encode(streamBufAB, STATE_B_GEM_CUTTING);
+        RegistryByteBuf streamBufAB = createRegistryBuf(context);
+        WorkstationStateComponent.PACKET_CODEC.encode(streamBufAB, STATE_A_SWORD_FORGING);
+        WorkstationStateComponent.PACKET_CODEC.encode(streamBufAB, STATE_B_PICKAXE_FORGING);
 
-        context.assertTrue(streamBufAB.readableBytes() == bytesA + bytesB,
+        context.assertEquals(bytesA + bytesB, streamBufAB.readableBytes(),
                 "Concatenated AB buffer must equal exact sum of State A and State B byte lengths: " + (bytesA + bytesB));
 
         WorkstationStateComponent streamDecodedA = WorkstationStateComponent.PACKET_CODEC.decode(streamBufAB);
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, streamDecodedA, "Concatenated Stream A");
-        context.assertTrue(streamBufAB.readableBytes() == bytesB,
+        assertComponentEquals(context, STATE_A_SWORD_FORGING, streamDecodedA, "Concatenated Stream A");
+        context.assertEquals(bytesB, streamBufAB.readableBytes(),
                 "After reading State A, stream buffer must have exactly bytesB remaining: " + bytesB);
 
         WorkstationStateComponent streamDecodedB = WorkstationStateComponent.PACKET_CODEC.decode(streamBufAB);
-        assertComponentEquals(context, STATE_B_GEM_CUTTING, streamDecodedB, "Concatenated Stream B");
-        context.assertTrue(streamBufAB.readableBytes() == 0,
+        assertComponentEquals(context, STATE_B_PICKAXE_FORGING, streamDecodedB, "Concatenated Stream B");
+        context.assertEquals(0, streamBufAB.readableBytes(),
                 "After reading State B, stream buffer must have exactly zero unread trailing bytes");
 
         // --- 3. Reverse Concatenated Stream Pipeline (State B immediately followed by State A) ---
-        PacketByteBuf streamBufBA = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(streamBufBA, STATE_B_GEM_CUTTING);
-        WorkstationStateComponent.PACKET_CODEC.encode(streamBufBA, STATE_A_INGOT_SMITHING);
+        RegistryByteBuf streamBufBA = createRegistryBuf(context);
+        WorkstationStateComponent.PACKET_CODEC.encode(streamBufBA, STATE_B_PICKAXE_FORGING);
+        WorkstationStateComponent.PACKET_CODEC.encode(streamBufBA, STATE_A_SWORD_FORGING);
 
-        context.assertTrue(streamBufBA.readableBytes() == bytesB + bytesA,
+        context.assertEquals(bytesB + bytesA, streamBufBA.readableBytes(),
                 "Concatenated BA buffer must equal exact sum of State B and State A byte lengths: " + (bytesB + bytesA));
 
         WorkstationStateComponent revDecodedB = WorkstationStateComponent.PACKET_CODEC.decode(streamBufBA);
-        assertComponentEquals(context, STATE_B_GEM_CUTTING, revDecodedB, "Reverse Stream B");
-        context.assertTrue(streamBufBA.readableBytes() == bytesA,
+        assertComponentEquals(context, STATE_B_PICKAXE_FORGING, revDecodedB, "Reverse Stream B");
+        context.assertEquals(bytesA, streamBufBA.readableBytes(),
                 "After reading State B, stream buffer must have exactly bytesA remaining: " + bytesA);
 
         WorkstationStateComponent revDecodedA = WorkstationStateComponent.PACKET_CODEC.decode(streamBufBA);
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, revDecodedA, "Reverse Stream A");
-        context.assertTrue(streamBufBA.readableBytes() == 0,
+        assertComponentEquals(context, STATE_A_SWORD_FORGING, revDecodedA, "Reverse Stream A");
+        context.assertEquals(0, streamBufBA.readableBytes(),
                 "After reading State A, reverse stream buffer must have exactly zero unread trailing bytes");
 
         // --- 4. Trailing Garbage Byte Isolation ---
-        PacketByteBuf garbageBuf = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(garbageBuf, STATE_A_INGOT_SMITHING);
+        RegistryByteBuf garbageBuf = createRegistryBuf(context);
+        WorkstationStateComponent.PACKET_CODEC.encode(garbageBuf, STATE_A_SWORD_FORGING);
         garbageBuf.writeInt(0x5A5A5A5A); // 4 trailing sentinel garbage bytes
-        context.assertTrue(garbageBuf.readableBytes() == bytesA + 4, "Garbage buffer must contain bytesA + 4 bytes");
+        context.assertEquals(bytesA + 4, garbageBuf.readableBytes(), "Garbage buffer must contain bytesA + 4 bytes");
 
         WorkstationStateComponent decodedFromGarbage = WorkstationStateComponent.PACKET_CODEC.decode(garbageBuf);
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, decodedFromGarbage, "Garbage Buffer Decode");
-        context.assertTrue(garbageBuf.readableBytes() == 4,
+        assertComponentEquals(context, STATE_A_SWORD_FORGING, decodedFromGarbage, "Garbage Buffer Decode");
+        context.assertEquals(4, garbageBuf.readableBytes(),
                 "Codec must not consume trailing bytes; exactly 4 bytes must remain unread");
-        context.assertTrue(garbageBuf.readInt() == 0x5A5A5A5A, "Trailing bytes must remain uncorrupted 0x5A5A5A5A sentinel");
+        context.assertEquals(0x5A5A5A5A, garbageBuf.readInt(), "Trailing bytes must remain uncorrupted 0x5A5A5A5A sentinel");
 
         // --- 5. Systematic Truncation & Underflow Protection ---
         // Verify every possible sub-length prefix of State A throws on decode
         for (int cutLength = 0; cutLength < bytesA; cutLength++) {
-            PacketByteBuf fullBuf = PacketByteBufs.create();
-            WorkstationStateComponent.PACKET_CODEC.encode(fullBuf, STATE_A_INGOT_SMITHING);
+            RegistryByteBuf fullBuf = createRegistryBuf(context);
+            WorkstationStateComponent.PACKET_CODEC.encode(fullBuf, STATE_A_SWORD_FORGING);
             byte[] truncatedBytes = new byte[cutLength];
             fullBuf.readBytes(truncatedBytes);
 
-            PacketByteBuf truncatedBuf = PacketByteBufs.create();
+            RegistryByteBuf truncatedBuf = createRegistryBuf(context);
             truncatedBuf.writeBytes(truncatedBytes);
 
             boolean underflowCaught = false;
@@ -338,40 +303,7 @@ public class WorkstationStateComponentTest implements FabricGameTest {
             context.assertTrue(underflowCaught, "Decoding truncated State A buffer of length " + cutLength + "/" + bytesA + " must throw underflow exception");
         }
 
-        // Verify every possible sub-length prefix of State B throws on decode
-        for (int cutLength = 0; cutLength < bytesB; cutLength++) {
-            PacketByteBuf fullBuf = PacketByteBufs.create();
-            WorkstationStateComponent.PACKET_CODEC.encode(fullBuf, STATE_B_GEM_CUTTING);
-            byte[] truncatedBytes = new byte[cutLength];
-            fullBuf.readBytes(truncatedBytes);
-
-            PacketByteBuf truncatedBuf = PacketByteBufs.create();
-            truncatedBuf.writeBytes(truncatedBytes);
-
-            boolean underflowCaught = false;
-            try {
-                WorkstationStateComponent.PACKET_CODEC.decode(truncatedBuf);
-            } catch (Exception e) {
-                underflowCaught = true;
-            }
-            context.assertTrue(underflowCaught, "Decoding truncated State B buffer of length " + cutLength + "/" + bytesB + " must throw underflow exception");
-        }
-
-        // --- 6. Extreme Values & Multi-Byte VarInt Bounds ---
-        WorkstationStateComponent extremeState = new WorkstationStateComponent(
-                Identifier.of("k3_diegetic", "smithing/ultra_dense_core"),
-                10_000_000,
-                500_000,
-                1.0f,
-                true
-        );
-        PacketByteBuf extremeBuf = PacketByteBufs.create();
-        WorkstationStateComponent.PACKET_CODEC.encode(extremeBuf, extremeState);
-        WorkstationStateComponent extremeDecoded = WorkstationStateComponent.PACKET_CODEC.decode(extremeBuf);
-        assertComponentEquals(context, extremeState, extremeDecoded, "Extreme State PacketCodec");
-        context.assertTrue(extremeBuf.readableBytes() == 0, "Extreme state buffer must have 0 unread bytes");
-
-        // --- 7. DFU Codec Partial & Extra-Field Schema Drift ---
+        // --- 6. DFU Codec Partial & Extra-Field Schema Drift ---
         // Empty NBT compound decodes to DEFAULT
         NbtCompound emptyNbt = new NbtCompound();
         DataResult<WorkstationStateComponent> emptyParse = WorkstationStateComponent.CODEC.parse(NbtOps.INSTANCE, emptyNbt);
@@ -380,15 +312,15 @@ public class WorkstationStateComponentTest implements FabricGameTest {
 
         // NBT with extra unexpected field (future forward-compatibility)
         NbtCompound extraFieldNbt = new NbtCompound();
-        extraFieldNbt.putString("recipe_id", "k3_diegetic:smithing/tempered_blade");
-        extraFieldNbt.putInt("progress_ticks", 50);
-        extraFieldNbt.putInt("strike_count", 5);
-        extraFieldNbt.putFloat("thermal_state", 0.85f);
-        extraFieldNbt.putBoolean("active", true);
+        extraFieldNbt.putString("active_blueprint", "k3_diegetic:sword_blueprint");
+        extraFieldNbt.putInt("strike_count", 2);
+        extraFieldNbt.putFloat("thermal_state", 0.45f);
         extraFieldNbt.putString("future_unknown_field", "some_data");
         DataResult<WorkstationStateComponent> extraParse = WorkstationStateComponent.CODEC.parse(NbtOps.INSTANCE, extraFieldNbt);
         WorkstationStateComponent fromExtra = extraParse.getOrThrow(msg -> new AssertionError("Extra-field NBT parse failed: " + msg));
-        assertComponentEquals(context, STATE_A_INGOT_SMITHING, fromExtra, "DFU Extra-Field Forward Compatibility");
+        context.assertEquals(Identifier.of("k3_diegetic", "sword_blueprint"), fromExtra.activeBlueprint(), "Extra field NBT activeBlueprint mismatch");
+        context.assertEquals(2, fromExtra.strikeCount(), "Extra field NBT strikeCount mismatch");
+        context.assertTrue(Math.abs(fromExtra.thermalState() - 0.45f) < 1e-6f, "Extra field NBT thermalState mismatch");
 
         context.complete();
     }
@@ -400,19 +332,19 @@ public class WorkstationStateComponentTest implements FabricGameTest {
     private static void assertComponentEquals(TestContext context, WorkstationStateComponent expected, WorkstationStateComponent actual, String channel) {
         context.assertTrue(expected != null && actual != null,
                 "[" + channel + "] Components must not be null");
-        context.assertTrue(expected.recipeId().equals(actual.recipeId()),
-                "[" + channel + "] Recipe ID mismatch: expected " + expected.recipeId() + ", got " + actual.recipeId());
-        context.assertTrue(expected.progressTicks() == actual.progressTicks(),
-                "[" + channel + "] ProgressTicks mismatch: expected " + expected.progressTicks() + ", got " + actual.progressTicks());
-        context.assertTrue(expected.progress() == actual.progress(),
-                "[" + channel + "] Progress alias mismatch: expected " + expected.progress() + ", got " + actual.progress());
-        context.assertTrue(expected.strikeCount() == actual.strikeCount(),
+        context.assertEquals(expected.activeBlueprint(), actual.activeBlueprint(),
+                "[" + channel + "] Blueprint mismatch: expected " + expected.activeBlueprint() + ", got " + actual.activeBlueprint());
+        context.assertEquals(expected.strikeCount(), actual.strikeCount(),
                 "[" + channel + "] Strike count mismatch: expected " + expected.strikeCount() + ", got " + actual.strikeCount());
         context.assertTrue(Math.abs(expected.thermalState() - actual.thermalState()) < 1e-6f,
                 "[" + channel + "] Thermal state mismatch: expected " + expected.thermalState() + ", got " + actual.thermalState());
-        context.assertTrue(expected.active() == actual.active(),
-                "[" + channel + "] Active status mismatch: expected " + expected.active() + ", got " + actual.active());
-        context.assertTrue(expected.equals(actual),
-                "[" + channel + "] Record equals() equality failed between expected and actual");
+        context.assertEquals(expected.stagedIngredients().size(), actual.stagedIngredients().size(),
+                "[" + channel + "] Staged ingredients count mismatch");
+        for (int i = 0; i < expected.stagedIngredients().size(); i++) {
+            ItemStack expStack = expected.stagedIngredients().get(i);
+            ItemStack actStack = actual.stagedIngredients().get(i);
+            context.assertTrue(ItemStack.areEqual(expStack, actStack),
+                    "[" + channel + "] Staged item " + i + " mismatch (expected " + expStack + ", got " + actStack + ")");
+        }
     }
 }

@@ -9,6 +9,7 @@
     "fabric-gametest": [
       "com.k3.diegetic.gametest.K3DiegeticBootstrapTest",
       "com.k3.diegetic.gametest.WorkstationStateComponentTest",
+      "com.k3.diegetic.gametest.BlueprintBlacksmithingGameTest",
       "com.k3.diegetic.gametest.ArtisanWorkstationGameTest",
       "com.k3.diegetic.gametest.ArtisanWorkstationStressTest"
     ]

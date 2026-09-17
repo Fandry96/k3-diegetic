@@ -126,27 +126,24 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
             return ItemActionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         }
 
-        // 1. If anvil has no item, try to insert player's held item as the workpiece
-        if (!anvilBe.hasItem()) {
-            if (!stack.isEmpty()) {
-                if (!world.isClient()) {
-                    anvilBe.insertItem(player, hand);
-                    player.sendMessage(Text.literal("§a[Spark & Strike] Ingot placed on anvil. Strike with a Hammer or Pickaxe!"), true);
-                }
-                return ItemActionResult.success(world.isClient());
-            }
-            return ItemActionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
-        }
-
-        // 2. Anvil has an item: check if player is holding a crafting tool to strike
+        // 1. If player is holding a crafting strike tool, perform strike
         if (anvilBe.isValidStrikeTool(stack)) {
             if (!world.isClient()) {
-                boolean struck = anvilBe.performStrike(player, stack);
-                if (!struck) {
-                    player.sendMessage(Text.literal("§e[Spark & Strike] Strike with a Hammer or Pickaxe to forge!"), true);
-                }
+                anvilBe.performStrike(player, stack);
             }
             return ItemActionResult.success(world.isClient());
+        }
+
+        // 2. Otherwise, attempt sequential insertion (blueprint or workpiece ingredient)
+        if (!stack.isEmpty()) {
+            if (!world.isClient()) {
+                boolean inserted = anvilBe.insertItem(player, hand);
+                if (inserted) {
+                    return ItemActionResult.SUCCESS;
+                }
+            } else {
+                return ItemActionResult.SUCCESS;
+            }
         }
 
         // Fall through to onUse (e.g. for empty hand retrieval or off-hand use)
@@ -154,16 +151,21 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
     }
 
     /**
-     * Fallback right-click interaction (invoked when onUseWithItem passes or hand is empty).
-     * Handles workpiece retrieval.
+     * Fallback right-click interaction (invoked when hand is empty or onUseWithItem passes).
+     * Handles retrieval:
+     * - Normal click: pops last staged ingredient (mistake correction).
+     * - Sneak click: pops blueprint back to player.
      */
     @Override
     public ActionResult onUse(BlockState state, World world, BlockPos pos, PlayerEntity player, BlockHitResult hit) {
         BlockEntity be = world.getBlockEntity(pos);
         if (be instanceof ArtisanAnvilBlockEntity anvilBe && anvilBe.hasItem()) {
             if (!world.isClient()) {
-                anvilBe.extractItem(player);
-                player.sendMessage(Text.literal("§6[Spark & Strike] Workpiece retrieved from anvil."), true);
+                if (player.isSneaking()) {
+                    anvilBe.extractBlueprint(player);
+                } else {
+                    anvilBe.extractItem(player);
+                }
             }
             return ActionResult.success(world.isClient());
         }
@@ -182,8 +184,6 @@ public class ArtisanAnvilBlock extends BlockWithEntity {
                 ItemStack mainHand = player.getMainHandStack();
                 if (anvilBe.isValidStrikeTool(mainHand)) {
                     anvilBe.performStrike(player, mainHand);
-                } else {
-                    player.sendMessage(Text.literal("§e[Spark & Strike] Strike with a Hammer or Pickaxe to forge!"), true);
                 }
             }
         }

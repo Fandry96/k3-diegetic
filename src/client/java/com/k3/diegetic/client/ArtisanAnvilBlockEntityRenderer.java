@@ -9,13 +9,15 @@ import net.minecraft.client.render.block.entity.BlockEntityRendererFactory;
 import net.minecraft.client.render.model.json.ModelTransformationMode;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.RotationAxis;
 
 /**
  * Client-side BlockEntityRenderer for Artisan Anvil.
- * Directly renders the active workpiece flat on the top face of the anvil.
- * Guarantees visual rendering independent of entity tracking.
+ * Pure diegetic visualization of the blacksmithing workstation:
+ * - Renders blueprint stencil lying flat on the anvil top plate (Y + 1.01).
+ * - Renders staged workpiece items sequentially along the longitudinal axis (Y + 1.025).
  */
 public class ArtisanAnvilBlockEntityRenderer implements BlockEntityRenderer<ArtisanAnvilBlockEntity> {
 
@@ -25,35 +27,66 @@ public class ArtisanAnvilBlockEntityRenderer implements BlockEntityRenderer<Arti
     @Override
     public void render(ArtisanAnvilBlockEntity entity, float tickDelta, MatrixStack matrices,
                        VertexConsumerProvider vertexConsumers, int light, int overlay) {
-        ItemStack heldStack = entity.getHeldStack();
-        if (heldStack == null || heldStack.isEmpty()) {
-            return;
-        }
-
-        matrices.push();
-        // Translate to the center of the top anvil face
-        matrices.translate(0.5, 1.02, 0.5);
-
         Direction facing = entity.getCachedState().contains(ArtisanAnvilBlock.FACING)
                 ? entity.getCachedState().get(ArtisanAnvilBlock.FACING)
                 : Direction.NORTH;
 
-        // Lay workpiece flat on the anvil face oriented with the anvil
-        matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-facing.asRotation()));
-        matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90.0f));
-        matrices.scale(0.625f, 0.625f, 0.625f);
+        // 1. Render Blueprint stencil lying flat at Y + 1.01
+        ItemStack blueprint = entity.getBlueprint();
+        if (blueprint != null && !blueprint.isEmpty()) {
+            matrices.push();
+            matrices.translate(0.5, 1.01, 0.5);
+            matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-facing.asRotation()));
+            matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90.0f));
+            matrices.scale(0.65f, 0.65f, 0.65f);
 
-        MinecraftClient.getInstance().getItemRenderer().renderItem(
-                heldStack,
-                ModelTransformationMode.FIXED,
-                light,
-                overlay,
-                matrices,
-                vertexConsumers,
-                entity.getWorld(),
-                0
-        );
+            MinecraftClient.getInstance().getItemRenderer().renderItem(
+                    blueprint,
+                    ModelTransformationMode.FIXED,
+                    light,
+                    overlay,
+                    matrices,
+                    vertexConsumers,
+                    entity.getWorld(),
+                    0
+            );
+            matrices.pop();
+        }
 
-        matrices.pop();
+        // 2. Render staged workpiece ingredients sequentially along longitudinal axis at Y + 1.025
+        DefaultedList<ItemStack> staged = entity.getStagedIngredients();
+        if (staged != null && !staged.isEmpty()) {
+            int total = staged.size();
+            for (int i = 0; i < total; i++) {
+                ItemStack stack = staged.get(i);
+                if (stack.isEmpty()) continue;
+
+                matrices.push();
+                // Translate to anvil top plate center
+                matrices.translate(0.5, 1.025, 0.5);
+                // Rotate to match anvil orientation
+                matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-facing.asRotation()));
+
+                // Offset sequentially along the anvil's longitudinal axis
+                float zOffset = (i - (total - 1) / 2.0f) * 0.22f;
+                matrices.translate(0.0, 0.0, zOffset);
+
+                // Lay flat on top of the blueprint stencil
+                matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90.0f));
+                matrices.scale(0.38f, 0.38f, 0.38f);
+
+                MinecraftClient.getInstance().getItemRenderer().renderItem(
+                        stack,
+                        ModelTransformationMode.FIXED,
+                        light,
+                        overlay,
+                        matrices,
+                        vertexConsumers,
+                        entity.getWorld(),
+                        0
+                );
+                matrices.pop();
+            }
+        }
     }
 }

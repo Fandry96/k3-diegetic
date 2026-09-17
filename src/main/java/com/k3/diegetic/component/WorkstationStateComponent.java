@@ -2,64 +2,69 @@ package com.k3.diegetic.component;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import io.netty.buffer.ByteBuf;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.tooltip.TooltipAppender;
 import net.minecraft.item.tooltip.TooltipType;
+import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
 /**
  * Immutable Data Component tracking diegetic crafting workstation state on item stacks.
- * Stores recipe identifier, current progress counter, tool strike count, thermal state,
- * and active status.
+ * Records active blueprint stencil identifier, staged workpiece ingredients list,
+ * hammer strike count, and thermal state.
  *
  * Provides dual-channel serialization:
- * - Mojang DFU Codec for world disk persistence, commands (/give), and JSON recipes.
- * - Netty PacketCodec for zero-overhead delta synchronization across multiplayer sockets.
+ * - Mojang DFU Codec for world disk persistence, commands (/give), and JSON data packs.
+ * - Netty PacketCodec for zero-overhead multiplayer synchronization across sockets.
  */
 public record WorkstationStateComponent(
-    Identifier recipeId,
-    int progressTicks,
+    Identifier activeBlueprint,
+    List<ItemStack> stagedIngredients,
     int strikeCount,
-    float thermalState,
-    boolean active
+    float thermalState
 ) implements TooltipAppender {
 
-    /** Fallback recipe ID for unassigned or idle workpieces. */
-    public static final Identifier EMPTY_RECIPE_ID = Identifier.of("k3_diegetic", "empty");
+    /** Fallback empty blueprint identifier for unassigned or idle workpieces. */
+    public static final Identifier EMPTY_BLUEPRINT = Identifier.of("k3_diegetic", "empty");
 
-    /** Default immutable instance representing an unworked workpiece. */
+    /** Default immutable instance representing an empty workstation state. */
     public static final WorkstationStateComponent DEFAULT = new WorkstationStateComponent(
-        EMPTY_RECIPE_ID, 0, 0, 0.0f, false
+        EMPTY_BLUEPRINT, List.of(), 0, 0.0f
     );
 
-    /** Alias for DEFAULT to support EMPTY constant naming convention. */
+    /** Alias for DEFAULT constant naming convention. */
     public static final WorkstationStateComponent EMPTY = DEFAULT;
 
     /**
      * Compact constructor enforcing non-null identifiers and non-negative metric bounds.
      */
     public WorkstationStateComponent {
-        if (recipeId == null) {
-            recipeId = EMPTY_RECIPE_ID;
+        if (activeBlueprint == null) {
+            activeBlueprint = EMPTY_BLUEPRINT;
         }
-        progressTicks = Math.max(0, progressTicks);
+        if (stagedIngredients == null) {
+            stagedIngredients = List.of();
+        } else {
+            stagedIngredients = List.copyOf(stagedIngredients);
+        }
         strikeCount = Math.max(0, strikeCount);
         thermalState = Math.max(0.0f, thermalState);
     }
 
     /**
-     * Convenience 4-parameter constructor defaulting active status.
+     * Convenience constructor supporting legacy 5-parameter signatures.
      */
-    public WorkstationStateComponent(Identifier recipeId, int progressTicks, int strikeCount, float thermalState) {
-        this(recipeId, progressTicks, strikeCount, thermalState, progressTicks > 0 || strikeCount > 0);
+    public WorkstationStateComponent(Identifier recipeId, int progressTicks, int strikeCount, float thermalState, boolean active) {
+        this(recipeId != null ? recipeId : EMPTY_BLUEPRINT, List.of(), strikeCount, thermalState);
     }
 
     /* =========================================================================
@@ -68,75 +73,83 @@ public record WorkstationStateComponent(
 
     /**
      * Channel 1: Mojang DFU Codec for NBT world disk storage, command parsing, and data packs.
-     * All fields are safely defaulted to prevent deserialization crashes on partial input.
      */
     public static final Codec<WorkstationStateComponent> CODEC = RecordCodecBuilder.create(instance ->
         instance.group(
-            Identifier.CODEC.optionalFieldOf("recipe_id", EMPTY_RECIPE_ID).forGetter(WorkstationStateComponent::recipeId),
-            Codec.INT.optionalFieldOf("progress_ticks", 0).forGetter(WorkstationStateComponent::progressTicks),
+            Identifier.CODEC.optionalFieldOf("active_blueprint", EMPTY_BLUEPRINT).forGetter(WorkstationStateComponent::activeBlueprint),
+            ItemStack.CODEC.listOf().optionalFieldOf("staged_ingredients", List.of()).forGetter(WorkstationStateComponent::stagedIngredients),
             Codec.INT.optionalFieldOf("strike_count", 0).forGetter(WorkstationStateComponent::strikeCount),
-            Codec.FLOAT.optionalFieldOf("thermal_state", 0.0f).forGetter(WorkstationStateComponent::thermalState),
-            Codec.BOOL.optionalFieldOf("active", false).forGetter(WorkstationStateComponent::active)
+            Codec.FLOAT.optionalFieldOf("thermal_state", 0.0f).forGetter(WorkstationStateComponent::thermalState)
         ).apply(instance, WorkstationStateComponent::new)
     );
 
     /**
      * Channel 2: High-performance binary PacketCodec for Netty multiplayer delta sync.
-     * Encodes into variable-length integers and raw IEEE-754 floats (~10 bytes total payload).
      */
-    public static final PacketCodec<ByteBuf, WorkstationStateComponent> PACKET_CODEC = PacketCodec.tuple(
-        Identifier.PACKET_CODEC, WorkstationStateComponent::recipeId,
-        PacketCodecs.VAR_INT, WorkstationStateComponent::progressTicks,
+    public static final PacketCodec<RegistryByteBuf, WorkstationStateComponent> PACKET_CODEC = PacketCodec.tuple(
+        Identifier.PACKET_CODEC, WorkstationStateComponent::activeBlueprint,
+        ItemStack.PACKET_CODEC.collect(PacketCodecs.toList()), WorkstationStateComponent::stagedIngredients,
         PacketCodecs.VAR_INT, WorkstationStateComponent::strikeCount,
         PacketCodecs.FLOAT, WorkstationStateComponent::thermalState,
-        PacketCodecs.BOOL, WorkstationStateComponent::active,
         WorkstationStateComponent::new
     );
 
     /* =========================================================================
-     * ACCESSOR / ALIAS METHODS
+     * ACCESSOR / ALIAS METHODS FOR CONTRACT AND BACKWARD COMPATIBILITY
      * ========================================================================= */
 
-    /** Alias for progressTicks for interface contract parity with milestone specs. */
+    public Identifier recipeId() {
+        return this.activeBlueprint;
+    }
+
+    public int progressTicks() {
+        return this.strikeCount;
+    }
+
     public int progress() {
-        return this.progressTicks;
+        return this.strikeCount;
+    }
+
+    public boolean active() {
+        return !this.activeBlueprint.equals(EMPTY_BLUEPRINT) || !this.stagedIngredients.isEmpty() || this.strikeCount > 0;
     }
 
     /* =========================================================================
      * IMMUTABLE WITHER EVOLUTION METHODS
      * ========================================================================= */
 
-    /** Returns a new component updated with new strike count. */
+    public WorkstationStateComponent withBlueprint(Identifier blueprintId) {
+        return new WorkstationStateComponent(blueprintId, this.stagedIngredients, this.strikeCount, this.thermalState);
+    }
+
+    public WorkstationStateComponent withStagedIngredients(List<ItemStack> ingredients) {
+        return new WorkstationStateComponent(this.activeBlueprint, ingredients, this.strikeCount, this.thermalState);
+    }
+
     public WorkstationStateComponent withStrike(int strikeCount) {
-        return new WorkstationStateComponent(this.recipeId, this.progressTicks, strikeCount, this.thermalState, this.active);
+        return new WorkstationStateComponent(this.activeBlueprint, this.stagedIngredients, strikeCount, this.thermalState);
     }
 
-    /** Returns a new component updated with new strike count and progress ticks. */
     public WorkstationStateComponent withStrike(int strikeCount, int progressTicks) {
-        return new WorkstationStateComponent(this.recipeId, progressTicks, strikeCount, this.thermalState, this.active);
+        return withStrike(strikeCount);
     }
 
-    /** Returns a new component with an updated thermal state metric. */
     public WorkstationStateComponent withThermalState(float thermalState) {
-        return new WorkstationStateComponent(this.recipeId, this.progressTicks, this.strikeCount, thermalState, this.active);
+        return new WorkstationStateComponent(this.activeBlueprint, this.stagedIngredients, this.strikeCount, thermalState);
     }
 
-    /** Returns a new component with updated progress ticks. */
     public WorkstationStateComponent withProgress(int progressTicks) {
-        return new WorkstationStateComponent(this.recipeId, progressTicks, this.strikeCount, this.thermalState, this.active);
+        return this;
     }
 
-    /** Returns a new component with updated active status. */
     public WorkstationStateComponent withActive(boolean active) {
-        return new WorkstationStateComponent(this.recipeId, this.progressTicks, this.strikeCount, this.thermalState, active);
+        return this;
     }
 
-    /** Returns a new component bound to a newly locked recipe. */
     public WorkstationStateComponent withRecipe(Identifier recipeId) {
-        return new WorkstationStateComponent(recipeId, 0, 0, this.thermalState, true);
+        return withBlueprint(recipeId);
     }
 
-    /** Resets component to default empty state. */
     public WorkstationStateComponent reset() {
         return DEFAULT;
     }
@@ -147,28 +160,25 @@ public record WorkstationStateComponent(
 
     @Override
     public void appendTooltip(Item.TooltipContext context, Consumer<Text> textConsumer, TooltipType type) {
-        if (!this.active && this.recipeId.equals(EMPTY_RECIPE_ID) && this.strikeCount == 0) {
+        if (this.activeBlueprint.equals(EMPTY_BLUEPRINT) && this.stagedIngredients.isEmpty() && this.strikeCount == 0) {
             return;
         }
 
-        if (!this.recipeId.equals(EMPTY_RECIPE_ID)) {
-            textConsumer.accept(Text.translatable("tooltip.k3_diegetic.recipe", this.recipeId.toString())
+        if (!this.activeBlueprint.equals(EMPTY_BLUEPRINT)) {
+            textConsumer.accept(Text.translatable("tooltip.k3_diegetic.blueprint", this.activeBlueprint.toString())
                 .formatted(Formatting.GRAY));
+        }
+
+        if (!this.stagedIngredients.isEmpty()) {
+            textConsumer.accept(Text.literal("Staged items: " + this.stagedIngredients.size())
+                .formatted(Formatting.YELLOW));
         }
 
         textConsumer.accept(Text.translatable("tooltip.k3_diegetic.strikes", this.strikeCount)
             .formatted(Formatting.GOLD));
 
-        textConsumer.accept(Text.translatable("tooltip.k3_diegetic.progress", this.progressTicks)
-            .formatted(Formatting.YELLOW));
-
         Formatting tempColor = this.thermalState > 0.5f ? Formatting.RED : Formatting.AQUA;
         textConsumer.accept(Text.translatable("tooltip.k3_diegetic.thermal", String.format(Locale.ROOT, "%.2f", this.thermalState))
             .formatted(tempColor));
-
-        if (this.active) {
-            textConsumer.accept(Text.translatable("tooltip.k3_diegetic.status.active")
-                .formatted(Formatting.GREEN));
-        }
     }
 }

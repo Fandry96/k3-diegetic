@@ -2,10 +2,18 @@
   "block.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
   "item.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
   "item.k3_diegetic.forging_hammer": "Forging Hammer",
+  "item.k3_diegetic.sword_blueprint": "Sword Blueprint",
+  "item.k3_diegetic.pickaxe_blueprint": "Pickaxe Blueprint",
+  "item.k3_diegetic.axe_blueprint": "Axe Blueprint",
   "recipe.k3_diegetic.artisan_crafting": "Spark & Strike Forging",
   "tooltip.k3_diegetic.recipe": "Recipe: %s",
+  "tooltip.k3_diegetic.blueprint": "Blueprint: %s",
   "tooltip.k3_diegetic.strikes": "Strikes: %s",
   "tooltip.k3_diegetic.progress": "Progress: %s%%",
   "tooltip.k3_diegetic.thermal": "Thermal: %s",
-  "tooltip.k3_diegetic.status.active": "Status: Active"
+  "tooltip.k3_diegetic.status.active": "Status: Active",
+  "tooltip.k3_diegetic.blueprint.output": "Forges: %s",
+  "tooltip.k3_diegetic.blueprint.tool": "Tool: %s",
+  "tooltip.k3_diegetic.blueprint.requires_header": "Requires:",
+  "book.k3_diegetic.manual.title": "Spark & Strike — Blacksmith's Manual"
 }

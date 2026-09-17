@@ -1,0 +1,31 @@
+{
+  "type": "k3_diegetic:artisan_crafting",
+  "blueprint": {
+    "item": "k3_diegetic:pickaxe_blueprint"
+  },
+  "ingredients": [
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:stick"
+    },
+    {
+      "item": "minecraft:stick"
+    }
+  ],
+  "tool": {
+    "tag": "minecraft:pickaxes"
+  },
+  "required_strikes": 3,
+  "result": {
+    "id": "minecraft:iron_pickaxe",
+    "count": 1
+  }
+}

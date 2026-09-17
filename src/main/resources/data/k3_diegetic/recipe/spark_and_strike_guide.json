@@ -1,0 +1,29 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    {
+      "item": "minecraft:book"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    }
+  ],
+  "result": {
+    "id": "minecraft:written_book",
+    "count": 1,
+    "components": {
+      "minecraft:written_book_content": {
+        "title": "Blacksmith's Manual",
+        "author": "Master Artisan",
+        "pages": [
+          "{\"text\":\"§6§lSpark & Strike§r\\n§8Blacksmith's Manual§r\\n\\n§0Welcome to physical in-world smithing.\\n\\nForget 2D menus. Craft an §1Artisan Anvil§0 and §1Forging Hammer§0 to shape metal directly in the world.\"}",
+          "{\"text\":\"§6§lCrafting Blueprints§r\\n\\n§0Before shaping steel, draft a Blueprint at a Crafting Table:\\n\\n• §1Sword Blueprint§0 (Paper, Ingot, Stick)\\n• §1Pickaxe Blueprint§0 (Paper, 3 Ingots, 2 Sticks)\\n• §1Axe Blueprint§0 (Paper, 3 Ingots, 2 Sticks)\"}",
+          "{\"text\":\"§6§lFeeding Materials§r\\n\\n§01. Right-click the anvil with a Blueprint to lay it flat.\\n\\n2. Feed workpiece items in sequence by right-clicking.\\n\\nWatch your §2action bar§0 for real-time loading feedback.\"}",
+          "{\"text\":\"§6§lStriking & Heat§r\\n\\n§0Once all materials are staged, strike with your §1Forging Hammer§0 (or pickaxe).\\n\\nEach strike shapes the metal. When finished, your forged item drops and the Blueprint remains for batching!\"}",
+          "{\"text\":\"§6§lMistake Correction§r\\n\\n§0Inserted the wrong material?\\n\\n• §1Empty hand right-click§0: pops the last staged item back.\\n\\n• §1Sneak + right-click§0: pops the Blueprint and all items back.\"}"
+        ]
+      }
+    }
+  }
+}

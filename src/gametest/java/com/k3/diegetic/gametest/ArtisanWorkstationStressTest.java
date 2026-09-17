@@ -3,7 +3,7 @@ package com.k3.diegetic.gametest;
 import com.k3.diegetic.block.ArtisanAnvilBlock;
 import com.k3.diegetic.block.ModBlocks;
 import com.k3.diegetic.block.entity.ArtisanAnvilBlockEntity;
-import com.k3.diegetic.component.ModDataComponentTypes;
+import com.k3.diegetic.item.ModItems;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.ItemEntity;
@@ -24,18 +24,19 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Empirical Stress Harness validating:
- * 1. Dual-Input Acceptance Constraint (Scenario A: Iron Ingot + Pickaxe -> 3 strikes -> Iron Sword).
- * 2. Dual-Input Acceptance Constraint (Scenario B: Amethyst Shard + Shears -> 2 strikes -> Diamond).
+ * Empirical Stress Harness validating Method 2 Blueprint Blacksmithing:
+ * 1. Dual-Input Acceptance Constraint (Scenario A: Sword Blueprint + 2 Ingots + 1 Stick -> 3 strikes -> Iron Sword).
+ * 2. Dual-Input Acceptance Constraint (Scenario B: Pickaxe Blueprint + 3 Ingots + 2 Sticks -> 3 strikes -> Iron Pickaxe).
  * 3. Exact per-strike tool durability degradation for damageable tools in Survival mode.
  * 4. Durability damage exemption when player is in Creative mode.
- * 5. Negative matching and durability preservation: shears on ingot, pickaxe on amethyst, sticks on anvil.
+ * 5. Negative matching and durability preservation: empty anvil, partial staging, invalid tools.
  * 6. Workstation block-level interaction pipeline: onUseWithItem, onUse extraction, and onBlockBreakStart.
+ * 7. Partial-progress block destruction cleanup (safe item preservation, zero orphan entities).
  */
 public class ArtisanWorkstationStressTest implements FabricGameTest {
 
     // =========================================================================
-    // 1. SCENARIO A: INGOT SMITHING STRESS & DURABILITY VERIFICATION
+    // 1. SCENARIO A: SWORD BLUEPRINT STRESS & DURABILITY VERIFICATION
     // =========================================================================
 
     @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
@@ -47,35 +48,42 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
 
         PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
 
-        // 1. Insert Iron Ingot
-        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT, 1));
-        boolean inserted = anvilBe.insertItem(player, Hand.MAIN_HAND);
-        context.assertTrue(inserted, "Inserting iron ingot must succeed");
+        // 1. Stage Sword Blueprint
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.SWORD_BLUEPRINT));
+        boolean bpInserted = anvilBe.insertItem(player, Hand.MAIN_HAND);
+        context.assertTrue(bpInserted, "Inserting Sword Blueprint must succeed");
 
-        // 2. Prepare Pickaxe with 0 initial damage
+        // 2. Stage ingredients (2 Iron Ingots + 1 Stick)
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+
+        // 3. Prepare Pickaxe with 0 initial damage
         ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
         player.setStackInHand(Hand.MAIN_HAND, pickaxe);
         context.assertEquals(0, pickaxe.getDamage(), "Pickaxe initial damage must be 0");
 
-        // 3. Strike 1
+        // 4. Strike 1
         boolean strike1 = anvilBe.performStrike(player, pickaxe);
         context.assertTrue(strike1, "Strike 1 with pickaxe must succeed");
         context.assertEquals(1, pickaxe.getDamage(), "Pickaxe durability damage must be exactly 1 after strike 1");
-        context.assertEquals(1, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Strike count must be 1 after strike 1");
+        context.assertEquals(1, anvilBe.getStrikeCount(), "Strike count must be 1 after strike 1");
 
-        // 4. Strike 2
+        // 5. Strike 2
         boolean strike2 = anvilBe.performStrike(player, pickaxe);
         context.assertTrue(strike2, "Strike 2 with pickaxe must succeed");
         context.assertEquals(2, pickaxe.getDamage(), "Pickaxe durability damage must be exactly 2 after strike 2");
-        context.assertEquals(2, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Strike count must be 2 after strike 2");
+        context.assertEquals(2, anvilBe.getStrikeCount(), "Strike count must be 2 after strike 2");
 
-        // 5. Strike 3 (Craft completion)
+        // 6. Strike 3 (Craft completion)
         boolean strike3 = anvilBe.performStrike(player, pickaxe);
         context.assertTrue(strike3, "Strike 3 with pickaxe must complete the craft");
         context.assertEquals(3, pickaxe.getDamage(), "Pickaxe durability damage must be exactly 3 after completion");
-        context.assertFalse(anvilBe.hasItem(), "Workstation workpiece must be cleared after completion");
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingredients must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Blueprint must be retained for batching");
 
         // Assert crafted Iron Sword was spawned
         context.expectItemAt(Items.IRON_SWORD, pos, 2.0);
@@ -83,7 +91,7 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
     }
 
     // =========================================================================
-    // 2. SCENARIO B: GEM CUTTING STRESS & DURABILITY VERIFICATION
+    // 2. SCENARIO B: PICKAXE BLUEPRINT STRESS & DURABILITY VERIFICATION
     // =========================================================================
 
     @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
@@ -95,31 +103,47 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
 
         PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
 
-        // 1. Insert Amethyst Shard
-        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.AMETHYST_SHARD, 1));
-        boolean inserted = anvilBe.insertItem(player, Hand.MAIN_HAND);
-        context.assertTrue(inserted, "Inserting amethyst shard must succeed");
+        // 1. Stage Pickaxe Blueprint
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.PICKAXE_BLUEPRINT));
+        boolean bpInserted = anvilBe.insertItem(player, Hand.MAIN_HAND);
+        context.assertTrue(bpInserted, "Inserting Pickaxe Blueprint must succeed");
 
-        // 2. Prepare Shears with 0 initial damage
-        ItemStack shears = new ItemStack(Items.SHEARS);
-        player.setStackInHand(Hand.MAIN_HAND, shears);
-        context.assertEquals(0, shears.getDamage(), "Shears initial damage must be 0");
+        // 2. Stage ingredients (3 Iron Ingots + 2 Sticks)
+        for (int i = 0; i < 3; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            anvilBe.insertItem(player, Hand.MAIN_HAND);
+        }
+        for (int i = 0; i < 2; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
+            anvilBe.insertItem(player, Hand.MAIN_HAND);
+        }
 
-        // 3. Strike 1 with Shears
-        boolean strike1 = anvilBe.performStrike(player, shears);
-        context.assertTrue(strike1, "Strike 1 with shears must succeed");
-        context.assertEquals(1, shears.getDamage(), "Shears durability damage must be exactly 1 after strike 1");
-        context.assertEquals(1, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Strike count must be 1 after strike 1");
+        // 3. Prepare Forging Hammer with 0 initial damage
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+        context.assertEquals(0, hammer.getDamage(), "Hammer initial damage must be 0");
 
-        // 4. Strike 2 with Shears (Completion)
-        boolean strike2 = anvilBe.performStrike(player, shears);
-        context.assertTrue(strike2, "Strike 2 with shears must complete the craft");
-        context.assertEquals(2, shears.getDamage(), "Shears durability damage must be exactly 2 after completion");
-        context.assertFalse(anvilBe.hasItem(), "Workstation workpiece must be cleared after completion");
+        // 4. Strike 1 with Hammer
+        boolean strike1 = anvilBe.performStrike(player, hammer);
+        context.assertTrue(strike1, "Strike 1 with hammer must succeed");
+        context.assertEquals(1, hammer.getDamage(), "Hammer durability damage must be exactly 1 after strike 1");
+        context.assertEquals(1, anvilBe.getStrikeCount(), "Strike count must be 1 after strike 1");
 
-        // Assert Diamond spawned
-        context.expectItemAt(Items.DIAMOND, pos, 2.0);
+        // 5. Strike 2 with Hammer
+        boolean strike2 = anvilBe.performStrike(player, hammer);
+        context.assertTrue(strike2, "Strike 2 with hammer must succeed");
+        context.assertEquals(2, hammer.getDamage(), "Hammer durability damage must be exactly 2 after strike 2");
+        context.assertEquals(2, anvilBe.getStrikeCount(), "Strike count must be 2 after strike 2");
+
+        // 6. Strike 3 with Hammer (Completion)
+        boolean strike3 = anvilBe.performStrike(player, hammer);
+        context.assertTrue(strike3, "Strike 3 with hammer must complete the craft");
+        context.assertEquals(3, hammer.getDamage(), "Hammer durability damage must be exactly 3 after completion");
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Pickaxe ingredients must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Pickaxe blueprint must remain on anvil");
+
+        // Assert Iron Pickaxe spawned
+        context.expectItemAt(Items.IRON_PICKAXE, pos, 2.0);
         context.complete();
     }
 
@@ -134,43 +158,32 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
         PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
 
-        // --- Test 3A: Shears on Iron Ingot ---
-        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT, 1));
+        // --- Test 3A: Striking empty anvil with Hammer ---
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+        boolean emptyStrike = anvilBe.performStrike(player, hammer);
+
+        context.assertFalse(emptyStrike, "Hammer on empty anvil must fail cleanly");
+        context.assertEquals(0, hammer.getDamage(), "Hammer must NOT receive durability damage on empty anvil strike");
+        context.assertEquals(0, anvilBe.getStrikeCount(), "Workstation strike count must NOT advance on rejected strike");
+
+        // --- Test 3B: Striking incomplete staging (Blueprint + 1 Ingot only) ---
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.SWORD_BLUEPRINT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
         anvilBe.insertItem(player, Hand.MAIN_HAND);
 
-        ItemStack shears = new ItemStack(Items.SHEARS);
-        player.setStackInHand(Hand.MAIN_HAND, shears);
-        boolean invalidStrike1 = anvilBe.performStrike(player, shears);
+        boolean incompleteStrike = anvilBe.performStrike(player, hammer);
+        context.assertFalse(incompleteStrike, "Hammer on incomplete staging must fail cleanly");
+        context.assertEquals(0, hammer.getDamage(), "Hammer must NOT receive durability damage on incomplete staging");
+        context.assertEquals(0, anvilBe.getStrikeCount(), "Workstation strike count must NOT advance");
+        context.assertEquals(1, anvilBe.getStagedIngredients().size(), "Staged ingot must remain");
 
-        context.assertFalse(invalidStrike1, "Shears on Iron Ingot must fail cleanly");
-        context.assertEquals(0, shears.getDamage(), "Shears must NOT receive durability damage on rejected strike");
-        context.assertEquals(0, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Workstation strike count must NOT advance on rejected strike");
-        context.assertTrue(anvilBe.getHeldStack().isOf(Items.IRON_INGOT), "Workpiece must remain Iron Ingot");
-
-        // Reset workstation
-        anvilBe.clear();
-        context.assertFalse(anvilBe.hasItem(), "Workstation must be clear");
-
-        // --- Test 3B: Pickaxe on Amethyst Shard ---
-        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.AMETHYST_SHARD, 1));
-        anvilBe.insertItem(player, Hand.MAIN_HAND);
-
-        ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
-        player.setStackInHand(Hand.MAIN_HAND, pickaxe);
-        boolean invalidStrike2 = anvilBe.performStrike(player, pickaxe);
-
-        context.assertFalse(invalidStrike2, "Pickaxe on Amethyst Shard must fail cleanly");
-        context.assertEquals(0, pickaxe.getDamage(), "Pickaxe must NOT receive durability damage on rejected strike");
-        context.assertEquals(0, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Workstation strike count must NOT advance on rejected strike");
-        context.assertTrue(anvilBe.getHeldStack().isOf(Items.AMETHYST_SHARD), "Workpiece must remain Amethyst Shard");
-
-        // --- Test 3C: Stick on Amethyst Shard ---
+        // --- Test 3C: Invalid tool (Stick) on anvil ---
         ItemStack stick = new ItemStack(Items.STICK);
         player.setStackInHand(Hand.MAIN_HAND, stick);
         boolean invalidStick = anvilBe.performStrike(player, stick);
-        context.assertFalse(invalidStick, "Stick on Amethyst Shard must fail cleanly");
+        context.assertFalse(invalidStick, "Stick on anvil must fail cleanly");
 
         context.complete();
     }
@@ -186,7 +199,14 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
         PlayerEntity creativePlayer = context.createMockPlayer(GameMode.CREATIVE);
 
-        creativePlayer.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT, 1));
+        // Stage Sword Blueprint + full ingredients
+        creativePlayer.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.SWORD_BLUEPRINT));
+        anvilBe.insertItem(creativePlayer, Hand.MAIN_HAND);
+        creativePlayer.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(creativePlayer, Hand.MAIN_HAND);
+        creativePlayer.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(creativePlayer, Hand.MAIN_HAND);
+        creativePlayer.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
         anvilBe.insertItem(creativePlayer, Hand.MAIN_HAND);
 
         ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
@@ -195,6 +215,7 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         boolean strike = anvilBe.performStrike(creativePlayer, pickaxe);
         context.assertTrue(strike, "Creative strike must succeed");
         context.assertEquals(0, pickaxe.getDamage(), "Tool must NOT suffer durability damage in Creative mode");
+        context.assertEquals(1, anvilBe.getStrikeCount(), "Strike count must advance even in Creative mode");
 
         context.complete();
     }
@@ -212,10 +233,6 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
 
         BlockPos absolutePos = context.getAbsolutePos(pos);
-
-        // Step 1: Right-click with Iron Ingot -> onUseWithItem insertion
-        ItemStack ingot = new ItemStack(Items.IRON_INGOT, 1);
-        player.setStackInHand(Hand.MAIN_HAND, ingot);
         BlockHitResult hit = new BlockHitResult(
                 new Vec3d(absolutePos.getX() + 0.5, absolutePos.getY() + 1.0, absolutePos.getZ() + 0.5),
                 Direction.UP,
@@ -223,8 +240,11 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
                 false
         );
 
-        ItemActionResult insertResult = block.onUseWithItem(
-                ingot,
+        // Step 1: Right-click with Sword Blueprint -> onUseWithItem insertion
+        ItemStack blueprint = new ItemStack(ModItems.SWORD_BLUEPRINT);
+        player.setStackInHand(Hand.MAIN_HAND, blueprint);
+        ItemActionResult bpResult = block.onUseWithItem(
+                blueprint,
                 context.getBlockState(pos),
                 context.getWorld(),
                 absolutePos,
@@ -232,19 +252,33 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
                 Hand.MAIN_HAND,
                 hit
         );
-        context.assertTrue(insertResult.isAccepted(), "onUseWithItem must accept ingot insertion");
-        context.assertTrue(anvilBe.hasItem(), "Workstation must now have item");
+        context.assertTrue(bpResult.isAccepted(), "onUseWithItem must accept blueprint insertion");
+        context.assertTrue(anvilBe.hasBlueprint(), "Workstation must now have blueprint");
 
-        // Step 2: Left-click with Pickaxe -> onBlockBreakStart tool strike
+        // Step 2: Right-click with 2 Ingots and 1 Stick -> onUseWithItem
+        ItemStack ingot1 = new ItemStack(Items.IRON_INGOT);
+        player.setStackInHand(Hand.MAIN_HAND, ingot1);
+        block.onUseWithItem(ingot1, context.getBlockState(pos), context.getWorld(), absolutePos, player, Hand.MAIN_HAND, hit);
+
+        ItemStack ingot2 = new ItemStack(Items.IRON_INGOT);
+        player.setStackInHand(Hand.MAIN_HAND, ingot2);
+        block.onUseWithItem(ingot2, context.getBlockState(pos), context.getWorld(), absolutePos, player, Hand.MAIN_HAND, hit);
+
+        ItemStack stick = new ItemStack(Items.STICK);
+        player.setStackInHand(Hand.MAIN_HAND, stick);
+        block.onUseWithItem(stick, context.getBlockState(pos), context.getWorld(), absolutePos, player, Hand.MAIN_HAND, hit);
+
+        context.assertEquals(3, anvilBe.getStagedIngredients().size(), "3 ingredients must be staged");
+
+        // Step 3: Left-click with Pickaxe -> onBlockBreakStart tool strike
         ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
         player.setStackInHand(Hand.MAIN_HAND, pickaxe);
 
         block.onBlockBreakStart(context.getBlockState(pos), context.getWorld(), absolutePos, player);
-        context.assertEquals(1, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "onBlockBreakStart must advance strike count to 1");
+        context.assertEquals(1, anvilBe.getStrikeCount(), "onBlockBreakStart must advance strike count to 1");
         context.assertEquals(1, pickaxe.getDamage(), "onBlockBreakStart must inflict tool durability damage");
 
-        // Step 3: Right-click with Pickaxe -> onUseWithItem tool strike 2
+        // Step 4: Right-click with Pickaxe -> onUseWithItem tool strike 2
         ItemActionResult strike2Result = block.onUseWithItem(
                 pickaxe,
                 context.getBlockState(pos),
@@ -254,11 +288,10 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
                 Hand.MAIN_HAND,
                 hit
         );
-        context.assertTrue(strike2Result.isAccepted(), "onUseWithItem must accept pickaxe strike");
-        context.assertEquals(2, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Strike count must advance to 2");
+        context.assertTrue(strike2Result.isAccepted(), "onUseWithItem must accept pickaxe strike 2");
+        context.assertEquals(2, anvilBe.getStrikeCount(), "Strike count must advance to 2");
 
-        // Step 4: Right-click with Pickaxe -> onUseWithItem tool strike 3 (Completion)
+        // Step 5: Right-click with Pickaxe -> onUseWithItem tool strike 3 (Completion)
         ItemActionResult strike3Result = block.onUseWithItem(
                 pickaxe,
                 context.getBlockState(pos),
@@ -269,7 +302,7 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
                 hit
         );
         context.assertTrue(strike3Result.isAccepted(), "onUseWithItem strike 3 must complete craft");
-        context.assertFalse(anvilBe.hasItem(), "Workstation must be cleared after craft completion");
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Workstation ingredients must be cleared");
         context.expectItemAt(Items.IRON_SWORD, pos, 2.0);
 
         context.complete();
@@ -286,13 +319,17 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
         PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
 
-        // 1. Insert Iron Ingot into workstation
-        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT, 1));
+        // 1. Stage Sword Blueprint + 2 Ingots + 1 Stick
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.SWORD_BLUEPRINT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        anvilBe.insertItem(player, Hand.MAIN_HAND);
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
         anvilBe.insertItem(player, Hand.MAIN_HAND);
 
-        UUID displayUuid = anvilBe.getDisplayEntityUuid();
         UUID interactionUuid = anvilBe.getInteractionEntityUuid();
-        context.assertTrue(displayUuid != null, "Display entity UUID must exist");
         context.assertTrue(interactionUuid != null, "Interaction entity UUID must exist");
 
         // 2. Perform 2 out of 3 required strikes (Partial Progress: 66%)
@@ -303,18 +340,13 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         boolean strike2 = anvilBe.performStrike(player, pickaxe);
         context.assertTrue(strike2, "Strike 2 must succeed");
 
-        context.assertEquals(2, anvilBe.getHeldStack().get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Workstation must hold 2 strikes of partial progress");
+        context.assertEquals(2, anvilBe.getStrikeCount(), "Workstation must hold 2 strikes of partial progress");
         context.assertEquals(2, pickaxe.getDamage(), "Pickaxe must have 2 damage");
 
         // 3. Destroy the block mid-craft at partial progress
         context.removeBlock(pos);
 
-        // 4. Assert tracked entities are discarded
-        var checkDisplay = context.getWorld().getEntity(displayUuid);
-        context.assertTrue(checkDisplay == null || checkDisplay.isRemoved(),
-                "Display entity must be discarded after block destruction");
-
+        // 4. Assert tracked entity is discarded
         var checkInteraction = context.getWorld().getEntity(interactionUuid);
         context.assertTrue(checkInteraction == null || checkInteraction.isRemoved(),
                 "Interaction entity must be discarded after block destruction");
@@ -326,16 +358,28 @@ public class ArtisanWorkstationStressTest implements FabricGameTest {
         var orphanInteractions = context.getEntitiesAround(EntityType.INTERACTION, pos, 3.0);
         context.assertTrue(orphanInteractions.isEmpty(), "Zero orphan InteractionEntities must remain in world");
 
-        // 6. Assert dropped workpiece retains partial progress component
-        List<ItemEntity> droppedItems = context.getEntitiesAround(EntityType.ITEM, pos, 2.0);
-        context.assertFalse(droppedItems.isEmpty(), "Dropped item entity must be present in world");
-        ItemEntity dropped = droppedItems.get(0);
-        ItemStack droppedStack = dropped.getStack();
-        context.assertTrue(droppedStack.isOf(Items.IRON_INGOT), "Dropped stack must be Iron Ingot");
-        context.assertTrue(droppedStack.contains(ModDataComponentTypes.WORKSTATION_STATE),
-                "Dropped stack must retain WorkstationStateComponent");
-        context.assertEquals(2, droppedStack.get(ModDataComponentTypes.WORKSTATION_STATE).strikeCount(),
-                "Dropped stack must retain 2 strikes of partial progress");
+        // 6. Assert dropped items exist in world
+        List<ItemEntity> droppedItems = context.getEntitiesAround(EntityType.ITEM, pos, 3.0);
+        context.assertFalse(droppedItems.isEmpty(), "Dropped item entities must be present in world");
+
+        int blueprintCount = 0;
+        int ingotCount = 0;
+        int stickCount = 0;
+
+        for (ItemEntity dropped : droppedItems) {
+            ItemStack stack = dropped.getStack();
+            if (stack.isOf(ModItems.SWORD_BLUEPRINT)) {
+                blueprintCount += stack.getCount();
+            } else if (stack.isOf(Items.IRON_INGOT)) {
+                ingotCount += stack.getCount();
+            } else if (stack.isOf(Items.STICK)) {
+                stickCount += stack.getCount();
+            }
+        }
+
+        context.assertEquals(1, blueprintCount, "Exactly 1 Sword Blueprint must be dropped");
+        context.assertEquals(2, ingotCount, "Exactly 2 Iron Ingots must be dropped");
+        context.assertEquals(1, stickCount, "Exactly 1 Stick must be dropped");
 
         context.complete();
     }
