@@ -80,11 +80,43 @@ public class ArtisanWorkstationGameTest implements FabricGameTest {
         context.assertTrue(cuttingRecipe.getResult(context.getWorld().getRegistryManager()).isOf(Items.DIAMOND),
                 "Gem Cutting result must be a Diamond");
 
-        // 4. Cross-Scenario Mismatch Validation (Anti-Overfitting Negative Assertions)
+        // 4. Scenario C: Copper Smithing (Copper Ingot + Iron Pickaxe -> 2 strikes -> Lightning Rod)
+        ItemStack copperIngot = new ItemStack(Items.COPPER_INGOT);
+        SingleStackRecipeInput copperInput = new SingleStackRecipeInput(copperIngot);
+
+        Optional<RecipeEntry<ArtisanCraftingRecipe>> copperOpt = recipes.stream()
+                .filter(entry -> entry.value().matches(copperInput, context.getWorld()) && entry.value().matchesTool(ironPickaxe))
+                .findFirst();
+
+        context.assertTrue(copperOpt.isPresent(), "Scenario C: Copper Smithing recipe must match (Copper Ingot + Pickaxe)");
+        ArtisanCraftingRecipe copperRecipe = copperOpt.get().value();
+        context.assertEquals(2, copperRecipe.requiredStrikes(), "Copper Smithing must require 2 strikes");
+        context.assertTrue(copperRecipe.getResult(context.getWorld().getRegistryManager()).isOf(Items.LIGHTNING_ROD),
+                "Copper Smithing result must be a Lightning Rod");
+
+        // 5. Scenario D: Gold Smithing (Gold Ingot + Iron Pickaxe -> 2 strikes -> Golden Sword)
+        ItemStack goldIngot = new ItemStack(Items.GOLD_INGOT);
+        SingleStackRecipeInput goldInput = new SingleStackRecipeInput(goldIngot);
+
+        Optional<RecipeEntry<ArtisanCraftingRecipe>> goldOpt = recipes.stream()
+                .filter(entry -> entry.value().matches(goldInput, context.getWorld()) && entry.value().matchesTool(ironPickaxe))
+                .findFirst();
+
+        context.assertTrue(goldOpt.isPresent(), "Scenario D: Gold Smithing recipe must match (Gold Ingot + Pickaxe)");
+        ArtisanCraftingRecipe goldRecipe = goldOpt.get().value();
+        context.assertEquals(2, goldRecipe.requiredStrikes(), "Gold Smithing must require 2 strikes");
+        context.assertTrue(goldRecipe.getResult(context.getWorld().getRegistryManager()).isOf(Items.GOLDEN_SWORD),
+                "Gold Smithing result must be a Golden Sword");
+
+        // 6. Cross-Scenario Mismatch Validation (Anti-Overfitting Negative Assertions)
         context.assertFalse(smithingRecipe.matchesTool(shears), "Iron Ingot recipe must reject Shears tool");
         context.assertFalse(cuttingRecipe.matchesTool(ironPickaxe), "Amethyst Shard recipe must reject Pickaxe tool");
+        context.assertFalse(copperRecipe.matchesTool(shears), "Copper Ingot recipe must reject Shears tool");
+        context.assertFalse(goldRecipe.matchesTool(shears), "Gold Ingot recipe must reject Shears tool");
         context.assertFalse(smithingRecipe.matches(gemInput, context.getWorld()), "Ingot Smithing must reject Amethyst Shard input");
         context.assertFalse(cuttingRecipe.matches(ingotInput, context.getWorld()), "Gem Cutting must reject Iron Ingot input");
+        context.assertFalse(copperRecipe.matches(goldInput, context.getWorld()), "Copper Smithing must reject Gold Ingot input");
+        context.assertFalse(goldRecipe.matches(copperInput, context.getWorld()), "Gold Smithing must reject Copper Ingot input");
 
         context.complete();
     }
@@ -449,6 +481,68 @@ public class ArtisanWorkstationGameTest implements FabricGameTest {
         anvilBe.performStrike(player, pickaxe);
         anvilBe.performStrike(player, pickaxe);
         context.assertFalse(anvilBe.hasItem(), "Workstation is cleared after craft 2");
+
+        context.complete();
+    }
+
+    // =========================================================================
+    // TEST 9: IN-WORLD WORKSTATION LIFECYCLE (COPPER & GOLD SMITHING DELIVERABLES)
+    // =========================================================================
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testInWorldWorkstationLifecycleCopperAndGold(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        context.assertTrue(anvilBe != null, "ArtisanAnvilBlockEntity must be present");
+
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        // --- PART 1: COPPER SMITHING (Copper Ingot + Pickaxe -> 2 strikes -> Lightning Rod) ---
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.COPPER_INGOT, 1));
+        boolean insertedCopper = anvilBe.insertItem(player, Hand.MAIN_HAND);
+        context.assertTrue(insertedCopper, "Inserting copper ingot must succeed");
+        context.assertTrue(anvilBe.getHeldStack().isOf(Items.COPPER_INGOT), "Held workpiece must be copper ingot");
+
+        // Negative check: shears cannot strike copper ingot
+        ItemStack shears = new ItemStack(Items.SHEARS);
+        boolean invalidStrike = anvilBe.performStrike(player, shears);
+        context.assertFalse(invalidStrike, "Striking copper ingot with shears must be rejected");
+
+        // Strike 1 with iron pickaxe
+        ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
+        player.setStackInHand(Hand.MAIN_HAND, pickaxe);
+        boolean copperStrike1 = anvilBe.performStrike(player, pickaxe);
+        context.assertTrue(copperStrike1, "Copper strike 1 must succeed with pickaxe");
+        context.assertTrue(anvilBe.hasItem(), "Workpiece must still be on workstation after strike 1");
+
+        // Strike 2 with iron pickaxe (completion threshold 2 reached)
+        boolean copperStrike2 = anvilBe.performStrike(player, pickaxe);
+        context.assertTrue(copperStrike2, "Copper strike 2 must complete craft");
+        context.assertFalse(anvilBe.hasItem(), "Workstation workpiece must be cleared after copper craft completion");
+        context.expectItemAt(Items.LIGHTNING_ROD, pos, 2.0);
+
+        // --- PART 2: GOLD SMITHING (Gold Ingot + Pickaxe -> 2 strikes -> Golden Sword) ---
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.GOLD_INGOT, 1));
+        boolean insertedGold = anvilBe.insertItem(player, Hand.MAIN_HAND);
+        context.assertTrue(insertedGold, "Inserting gold ingot must succeed");
+        context.assertTrue(anvilBe.getHeldStack().isOf(Items.GOLD_INGOT), "Held workpiece must be gold ingot");
+
+        // Negative check: shears cannot strike gold ingot
+        boolean invalidGoldStrike = anvilBe.performStrike(player, shears);
+        context.assertFalse(invalidGoldStrike, "Striking gold ingot with shears must be rejected");
+
+        // Strike 1 with iron pickaxe
+        boolean goldStrike1 = anvilBe.performStrike(player, pickaxe);
+        context.assertTrue(goldStrike1, "Gold strike 1 must succeed with pickaxe");
+        context.assertTrue(anvilBe.hasItem(), "Workpiece must still be on workstation after strike 1");
+
+        // Strike 2 with iron pickaxe (completion threshold 2 reached)
+        boolean goldStrike2 = anvilBe.performStrike(player, pickaxe);
+        context.assertTrue(goldStrike2, "Gold strike 2 must complete craft");
+        context.assertFalse(anvilBe.hasItem(), "Workstation workpiece must be cleared after gold craft completion");
+        context.expectItemAt(Items.GOLDEN_SWORD, pos, 2.0);
 
         context.complete();
     }

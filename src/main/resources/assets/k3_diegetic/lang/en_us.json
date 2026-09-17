@@ -1,5 +1,10 @@
 {
   "block.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
   "item.k3_diegetic.artisan_anvil": "Spark & Strike Anvil",
-  "recipe.k3_diegetic.artisan_crafting": "Spark & Strike Forging"
+  "recipe.k3_diegetic.artisan_crafting": "Spark & Strike Forging",
+  "tooltip.k3_diegetic.recipe": "Recipe: %s",
+  "tooltip.k3_diegetic.strikes": "Strikes: %s",
+  "tooltip.k3_diegetic.progress": "Progress: %s%%",
+  "tooltip.k3_diegetic.thermal": "Thermal: %s",
+  "tooltip.k3_diegetic.status.active": "Status: Active"
 }
