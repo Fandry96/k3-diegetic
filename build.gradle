@@ -136,9 +136,9 @@ publishMods {
            project.version.toString().contains("-beta")  ? BETA : STABLE
     modLoaders.add("fabric")
 
-    dryRun = providers.environmentVariable("CI").getOrNull() == null ||
-             project.hasProperty("dryRun") ||
-             findProperty("dryRun") == "true"
+    dryRun = project.hasProperty("dryRun") ?
+             Boolean.parseBoolean(project.property("dryRun").toString()) :
+             (providers.environmentVariable("CI").getOrNull() == null)
     maxRetries = 3
 
     modrinth {
