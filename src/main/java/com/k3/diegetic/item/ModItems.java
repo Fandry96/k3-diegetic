@@ -76,6 +76,104 @@ public class ModItems {
             )
     );
 
+    /**
+     * Blueprint item for forging Iron Shovels (1 Iron Ingot + 2 Sticks).
+     */
+    public static final BlueprintItem SHOVEL_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("shovel_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_shovel"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x1)"),
+                            Text.translatable("item.minecraft.stick").append(" (x2)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
+    /**
+     * Blueprint item for forging Iron Hoes (2 Iron Ingots + 2 Sticks).
+     */
+    public static final BlueprintItem HOE_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("hoe_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_hoe"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x2)"),
+                            Text.translatable("item.minecraft.stick").append(" (x2)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
+    /**
+     * Blueprint item for forging Iron Helmets (5 Iron Ingots).
+     */
+    public static final BlueprintItem HELMET_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("helmet_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_helmet"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x5)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
+    /**
+     * Blueprint item for forging Iron Chestplates (8 Iron Ingots).
+     */
+    public static final BlueprintItem CHESTPLATE_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("chestplate_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_chestplate"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x8)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
+    /**
+     * Blueprint item for forging Iron Leggings (7 Iron Ingots).
+     */
+    public static final BlueprintItem LEGGINGS_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("leggings_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_leggings"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x7)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
+    /**
+     * Blueprint item for forging Iron Boots (4 Iron Ingots).
+     */
+    public static final BlueprintItem BOOTS_BLUEPRINT = Registry.register(
+            Registries.ITEM,
+            K3DiegeticMod.id("boots_blueprint"),
+            new BlueprintItem(
+                    new Item.Settings().maxCount(16),
+                    Text.translatable("item.minecraft.iron_boots"),
+                    List.of(
+                            Text.translatable("item.minecraft.iron_ingot").append(" (x4)")
+                    ),
+                    Text.translatable("item.k3_diegetic.forging_hammer")
+            )
+    );
+
     public static void registerModItems() {
         K3DiegeticMod.LOGGER.info("Registering ModItems for {}", K3DiegeticMod.MOD_ID);
 
@@ -85,6 +183,12 @@ public class ModItems {
             entries.add(SWORD_BLUEPRINT);
             entries.add(PICKAXE_BLUEPRINT);
             entries.add(AXE_BLUEPRINT);
+            entries.add(SHOVEL_BLUEPRINT);
+            entries.add(HOE_BLUEPRINT);
+            entries.add(HELMET_BLUEPRINT);
+            entries.add(CHESTPLATE_BLUEPRINT);
+            entries.add(LEGGINGS_BLUEPRINT);
+            entries.add(BOOTS_BLUEPRINT);
         });
 
         // Add blueprints to Functional creative tab
@@ -92,6 +196,12 @@ public class ModItems {
             entries.add(SWORD_BLUEPRINT);
             entries.add(PICKAXE_BLUEPRINT);
             entries.add(AXE_BLUEPRINT);
+            entries.add(SHOVEL_BLUEPRINT);
+            entries.add(HOE_BLUEPRINT);
+            entries.add(HELMET_BLUEPRINT);
+            entries.add(CHESTPLATE_BLUEPRINT);
+            entries.add(LEGGINGS_BLUEPRINT);
+            entries.add(BOOTS_BLUEPRINT);
         });
     }
 }

@@ -63,13 +63,13 @@ import java.util.UUID;
  */
 public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, SidedInventory {
 
-    public static final int MAX_STAGED_INGREDIENTS = 4;
-    public static final int INVENTORY_SIZE = 5;
+    public static final int MAX_STAGED_INGREDIENTS = 8;
+    public static final int INVENTORY_SIZE = 9;
 
     /** Active blueprint stencil positioned flat on the anvil top plate (Slot 0). */
     private ItemStack blueprint = ItemStack.EMPTY;
 
-    /** Ordered sequence of staged workpiece materials (Slots 1-4). */
+    /** Ordered sequence of staged workpiece materials (Slots 1-8). */
     private final DefaultedList<ItemStack> stagedIngredients = DefaultedList.of();
 
     /** Number of hammer strikes completed on current batch. */
@@ -203,6 +203,13 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         if (slot == 0 && !this.blueprint.isEmpty()) {
             ItemStack stack = this.blueprint;
             this.blueprint = ItemStack.EMPTY;
+            if (this.world != null) {
+                for (ItemStack ing : this.stagedIngredients) {
+                    if (!ing.isEmpty()) {
+                        ItemScatterer.spawn(this.world, this.pos.getX() + 0.5, this.pos.getY() + 0.5, this.pos.getZ() + 0.5, ing.copy());
+                    }
+                }
+            }
             this.clear();
             return stack;
         }
@@ -218,18 +225,21 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     @Override
     public void setStack(int slot, ItemStack stack) {
         if (slot == 0) {
-            this.blueprint = stack;
+            this.blueprint = stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(Math.min(stack.getCount(), 1));
         } else {
             int idx = slot - 1;
-            if (stack.isEmpty()) {
-                if (idx < this.stagedIngredients.size()) {
-                    this.stagedIngredients.remove(idx);
-                }
-            } else {
-                if (idx < this.stagedIngredients.size()) {
-                    this.stagedIngredients.set(idx, stack);
-                } else if (this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
-                    this.stagedIngredients.add(stack);
+            if (idx >= 0 && idx < MAX_STAGED_INGREDIENTS) {
+                if (stack.isEmpty()) {
+                    if (idx < this.stagedIngredients.size()) {
+                        this.stagedIngredients.remove(idx);
+                    }
+                } else {
+                    ItemStack single = stack.copyWithCount(Math.min(stack.getCount(), 1));
+                    if (idx < this.stagedIngredients.size()) {
+                        this.stagedIngredients.set(idx, single);
+                    } else if (idx == this.stagedIngredients.size() && this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
+                        this.stagedIngredients.add(single);
+                    }
                 }
             }
         }
@@ -248,11 +258,16 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
     }
 
     @Override
+    public boolean isValid(int slot, ItemStack stack) {
+        return this.canInsert(slot, stack, Direction.UP);
+    }
+
+    @Override
     public int[] getAvailableSlots(Direction side) {
         if (side == Direction.DOWN) {
             return new int[0];
         }
-        return new int[]{0, 1, 2, 3, 4};
+        return new int[]{0, 1, 2, 3, 4, 5, 6, 7, 8};
     }
 
     @Override
@@ -263,8 +278,19 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         if (slot == 0 && this.blueprint.isEmpty() && stack.getItem() instanceof BlueprintItem) {
             return true;
         }
-        if (slot >= 1 && !this.blueprint.isEmpty() && this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
-            return true;
+        if (slot >= 1 && slot <= MAX_STAGED_INGREDIENTS && !this.blueprint.isEmpty()
+                && this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS) {
+            int idx = slot - 1;
+            if (idx == this.stagedIngredients.size()) {
+                var recipeOpt = findRecipeForBlueprint(this.blueprint);
+                if (recipeOpt.isPresent()) {
+                    ArtisanCraftingRecipe recipe = recipeOpt.get().value();
+                    if (idx < recipe.ingredients().size()) {
+                        return recipe.ingredients().get(idx).test(stack);
+                    }
+                }
+                return false;
+            }
         }
         return false;
     }
@@ -765,7 +791,7 @@ public class ArtisanAnvilBlockEntity extends BlockEntity implements Clearable, S
         this.stagedIngredients.clear();
         if (nbt.contains("staged_ingredients", NbtElement.LIST_TYPE)) {
             NbtList list = nbt.getList("staged_ingredients", NbtElement.COMPOUND_TYPE);
-            for (int i = 0; i < list.size(); i++) {
+            for (int i = 0; i < list.size() && this.stagedIngredients.size() < MAX_STAGED_INGREDIENTS; i++) {
                 ItemStack stack = ItemStack.fromNbtOrEmpty(wrapperLookup, list.getCompound(i));
                 if (!stack.isEmpty()) {
                     this.stagedIngredients.add(stack);

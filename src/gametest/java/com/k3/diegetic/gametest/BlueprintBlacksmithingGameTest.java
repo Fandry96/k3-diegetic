@@ -22,6 +22,7 @@ import net.minecraft.test.TestContext;
 import net.minecraft.util.Hand;
 import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.world.GameMode;
 
 import java.util.List;
@@ -336,7 +337,25 @@ public class BlueprintBlacksmithingGameTest implements FabricGameTest {
                 new ItemStack(Items.IRON_PICKAXE)
         );
 
-        List<ArtisanCraftingRecipe> testRecipes = List.of(swordRecipe, pickaxeRecipe);
+        // Recipe C: Chestplate Forging Recipe (8 Iron Ingots)
+        ArtisanCraftingRecipe chestplateRecipe = new ArtisanCraftingRecipe(
+                Ingredient.ofItems(ModItems.CHESTPLATE_BLUEPRINT),
+                DefaultedList.copyOf(Ingredient.EMPTY,
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT),
+                        Ingredient.ofItems(Items.IRON_INGOT)
+                ),
+                Ingredient.ofItems(ModItems.FORGING_HAMMER),
+                3,
+                new ItemStack(Items.IRON_CHESTPLATE)
+        );
+
+        List<ArtisanCraftingRecipe> testRecipes = List.of(swordRecipe, pickaxeRecipe, chestplateRecipe);
 
         // Channel 1: DFU MapCodec via JsonOps.INSTANCE
         Codec<ArtisanCraftingRecipe> mapCodecAsCodec = ArtisanCraftingRecipe.Serializer.CODEC.codec();
@@ -441,6 +460,314 @@ public class BlueprintBlacksmithingGameTest implements FabricGameTest {
         context.assertEquals(1, blueprintCount, "Exactly 1 Sword Blueprint must be dropped safely");
         context.assertEquals(2, ingotCount, "Exactly 2 Iron Ingots must be dropped safely");
         context.assertEquals(1, stickCount, "Exactly 1 Stick must be dropped safely");
+
+        context.complete();
+    }
+
+    // =========================================================================
+    // TEST 7: SHOVEL BLUEPRINT FORGING LIFECYCLE (1 Iron Ingot + 2 Sticks)
+    // =========================================================================
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testShovelBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.SHOVEL_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Shovel Blueprint must succeed");
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Iron Ingot must succeed");
+
+        for (int i = 0; i < 2; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Stick " + (i + 1) + " must succeed");
+        }
+
+        context.assertEquals(3, anvilBe.getStagedIngredients().size(), "Shovel must have 3 staged ingredients");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_SHOVEL, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingredients must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Shovel Blueprint must be retained");
+        context.assertTrue(anvilBe.getBlueprint().isOf(ModItems.SHOVEL_BLUEPRINT), "Retained blueprint must be Shovel Blueprint");
+
+        context.complete();
+    }
+
+    // =========================================================================
+    // TEST 8: HOE BLUEPRINT FORGING LIFECYCLE (2 Iron Ingots + 2 Sticks)
+    // =========================================================================
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testHoeBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.HOE_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Hoe Blueprint must succeed");
+
+        for (int i = 0; i < 2; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Ingot " + (i + 1) + " must succeed");
+        }
+        for (int i = 0; i < 2; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.STICK));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Stick " + (i + 1) + " must succeed");
+        }
+
+        context.assertEquals(4, anvilBe.getStagedIngredients().size(), "Hoe must have 4 staged ingredients");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_HOE, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingredients must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Hoe Blueprint must be retained");
+        context.assertTrue(anvilBe.getBlueprint().isOf(ModItems.HOE_BLUEPRINT), "Retained blueprint must be Hoe Blueprint");
+
+        context.complete();
+    }
+
+    // =========================================================================
+    // TEST 9: ARMOR BLUEPRINTS (HELMET, BOOTS, LEGGINGS, CHESTPLATE)
+    // =========================================================================
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testHelmetBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.HELMET_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Helmet Blueprint must succeed");
+
+        for (int i = 0; i < 5; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Ingot " + (i + 1) + " for Helmet");
+        }
+        context.assertEquals(5, anvilBe.getStagedIngredients().size(), "Helmet must have 5 staged ingots");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_HELMET, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingots must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Helmet Blueprint must be retained");
+
+        context.complete();
+    }
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testBootsBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.BOOTS_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Boots Blueprint must succeed");
+
+        for (int i = 0; i < 4; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Ingot " + (i + 1) + " for Boots");
+        }
+        context.assertEquals(4, anvilBe.getStagedIngredients().size(), "Boots must have 4 staged ingots");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_BOOTS, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingots must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Boots Blueprint must be retained");
+
+        context.complete();
+    }
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testLeggingsBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.LEGGINGS_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Leggings Blueprint must succeed");
+
+        for (int i = 0; i < 7; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Ingot " + (i + 1) + " for Leggings");
+        }
+        context.assertEquals(7, anvilBe.getStagedIngredients().size(), "Leggings must have 7 staged ingots");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_LEGGINGS, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingots must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Leggings Blueprint must be retained");
+
+        context.complete();
+    }
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testChestplateBlueprintForgingLifecycle(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+
+        player.setStackInHand(Hand.MAIN_HAND, new ItemStack(ModItems.CHESTPLATE_BLUEPRINT));
+        context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Inserting Chestplate Blueprint must succeed");
+
+        for (int i = 0; i < 8; i++) {
+            player.setStackInHand(Hand.MAIN_HAND, new ItemStack(Items.IRON_INGOT));
+            context.assertTrue(anvilBe.insertItem(player, Hand.MAIN_HAND), "Staging Ingot " + (i + 1) + " for Chestplate");
+        }
+        context.assertEquals(8, anvilBe.getStagedIngredients().size(), "Chestplate must have 8 staged ingots");
+
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_CHESTPLATE, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Staged ingots must be consumed");
+        context.assertTrue(anvilBe.hasBlueprint(), "Chestplate Blueprint must be retained");
+
+        context.complete();
+    }
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testHopperChestplateFullStagingAndForging(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        context.assertEquals(9, anvilBe.size(), "Workstation must have 9 slots");
+
+        // 1. Insert Chestplate Blueprint via slot 0
+        ItemStack chestplateBp = new ItemStack(ModItems.CHESTPLATE_BLUEPRINT);
+        context.assertTrue(anvilBe.canInsert(0, chestplateBp, Direction.UP), "Hopper must be allowed to insert Chestplate Blueprint into slot 0");
+        anvilBe.setStack(0, chestplateBp);
+
+        // 2. Feed 8 Iron Ingots sequentially into slots 1 to 8
+        ItemStack ironIngot = new ItemStack(Items.IRON_INGOT);
+        for (int slot = 1; slot <= 8; slot++) {
+            context.assertTrue(anvilBe.canInsert(slot, ironIngot, Direction.UP), "Hopper must be allowed to insert ingot into slot " + slot);
+            anvilBe.setStack(slot, ironIngot);
+            context.assertEquals(slot, anvilBe.getStagedIngredients().size(), "Staged ingredients count must match slot " + slot);
+        }
+
+        // 3. Overflow rejection: extra insertion into full anvil must be rejected
+        context.assertFalse(anvilBe.canInsert(1, ironIngot, Direction.UP), "Hopper must reject extra insertion when anvil is full");
+
+        // 4. Forge with hammer
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_CHESTPLATE, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Ingredients must be consumed after craft");
+        context.assertTrue(anvilBe.hasBlueprint(), "Chestplate Blueprint must remain on anvil");
+
+        context.complete();
+    }
+
+    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
+    public void testHopperMultiIngredientFilterSequenceAndForging(TestContext context) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        context.setBlockState(pos, ModBlocks.ARTISAN_ANVIL.getDefaultState());
+
+        ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
+        context.assertTrue(anvilBe != null, "ArtisanAnvilBlockEntity must be present");
+
+        ItemStack shovelBp = new ItemStack(ModItems.SHOVEL_BLUEPRINT);
+        ItemStack ironIngot = new ItemStack(Items.IRON_INGOT);
+        ItemStack stick = new ItemStack(Items.STICK);
+
+        // 1. Stage Shovel Blueprint
+        context.assertTrue(anvilBe.canInsert(0, shovelBp, Direction.UP), "Hopper must be allowed to insert Shovel Blueprint into slot 0");
+        anvilBe.setStack(0, shovelBp);
+
+        // 2. Slot 1 filter check: stick must be rejected, ingot must be accepted
+        context.assertFalse(anvilBe.canInsert(1, stick, Direction.UP), "Slot 1 must reject Stick for Shovel recipe (requires Ingot)");
+        context.assertTrue(anvilBe.canInsert(1, ironIngot, Direction.UP), "Slot 1 must accept Iron Ingot");
+        context.assertTrue(anvilBe.isValid(1, ironIngot), "isValid(1, Iron Ingot) must return true");
+        context.assertFalse(anvilBe.isValid(1, stick), "isValid(1, Stick) must return false");
+
+        anvilBe.setStack(1, ironIngot);
+        context.assertEquals(1, anvilBe.getStagedIngredients().size(), "Staged count must be 1 after slot 1");
+
+        // 3. Slot 2 filter check: ingot must be rejected, stick must be accepted
+        context.assertFalse(anvilBe.canInsert(2, ironIngot, Direction.UP), "Slot 2 must reject Iron Ingot for Shovel recipe (requires Stick)");
+        context.assertTrue(anvilBe.canInsert(2, stick, Direction.UP), "Slot 2 must accept Stick");
+
+        // Test stack count clamping in setStack
+        ItemStack oversizedStick = new ItemStack(Items.STICK, 16);
+        anvilBe.setStack(2, oversizedStick);
+        context.assertEquals(1, anvilBe.getStagedIngredients().get(1).getCount(), "setStack must clamp item count to 1 (maxCountPerStack)");
+
+        // 4. Slot 3 filter check: stick must be accepted
+        context.assertTrue(anvilBe.canInsert(3, stick, Direction.UP), "Slot 3 must accept second Stick");
+        anvilBe.setStack(3, stick);
+        context.assertEquals(3, anvilBe.getStagedIngredients().size(), "Staged count must be 3 after slot 3");
+
+        // 5. Overflow rejection: Slot 4 must reject any additional insertion
+        context.assertFalse(anvilBe.canInsert(4, stick, Direction.UP), "Slot 4 must reject extra stick for 3-ingredient Shovel recipe");
+        context.assertFalse(anvilBe.canInsert(4, ironIngot, Direction.UP), "Slot 4 must reject extra ingot for 3-ingredient Shovel recipe");
+
+        // 6. Forge with hammer
+        PlayerEntity player = context.createMockPlayer(GameMode.SURVIVAL);
+        ItemStack hammer = new ItemStack(ModItems.FORGING_HAMMER);
+        player.setStackInHand(Hand.MAIN_HAND, hammer);
+
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 1 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 2 must succeed");
+        context.assertTrue(anvilBe.performStrike(player, hammer), "Strike 3 must complete craft");
+
+        context.expectItemAt(Items.IRON_SHOVEL, pos, 2.0);
+        context.assertTrue(anvilBe.getStagedIngredients().isEmpty(), "Ingredients must be consumed after craft");
+        context.assertTrue(anvilBe.hasBlueprint(), "Shovel Blueprint must remain on anvil for next batch");
 
         context.complete();
     }

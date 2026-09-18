@@ -54,8 +54,8 @@ $requiredResources = @(
     "assets/k3_diegetic/models/block/artisan_anvil.json",
     "assets/k3_diegetic/models/item/artisan_anvil.json",
     "assets/k3_diegetic/lang/en_us.json",
-    "data/k3_diegetic/recipe/ingot_smithing.json",
-    "data/k3_diegetic/recipe/gem_cutting.json",
+    "data/k3_diegetic/recipe/sword_forging.json",
+    "data/k3_diegetic/recipe/pickaxe_forging.json",
     "fabric.mod.json"
 )
 

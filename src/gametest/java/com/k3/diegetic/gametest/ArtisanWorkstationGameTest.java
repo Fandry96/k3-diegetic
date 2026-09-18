@@ -290,7 +290,7 @@ public class ArtisanWorkstationGameTest implements FabricGameTest {
 
         ArtisanAnvilBlockEntity anvilBe = context.getBlockEntity(pos);
         context.assertTrue(anvilBe != null, "ArtisanAnvilBlockEntity must be present");
-        context.assertEquals(5, anvilBe.size(), "Workstation inventory size must be 5 (1 blueprint + 4 ingredients)");
+        context.assertEquals(9, anvilBe.size(), "Workstation inventory size must be 9 (1 blueprint + 8 ingredients)");
         context.assertEquals(1, anvilBe.getMaxCountPerStack(), "Max stack count per slot must be 1");
 
         // 1. Slot 0 Blueprint Insertion

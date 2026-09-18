@@ -26,3 +26,6 @@ Thumbs.db
 .env.*
 *.env
 local.properties
+
+# Trash Review
+_Trash_Review/

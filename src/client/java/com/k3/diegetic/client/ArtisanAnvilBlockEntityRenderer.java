@@ -67,13 +67,32 @@ public class ArtisanAnvilBlockEntityRenderer implements BlockEntityRenderer<Arti
                 // Rotate to match anvil orientation
                 matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-facing.asRotation()));
 
-                // Offset sequentially along the anvil's longitudinal axis
-                float zOffset = (i - (total - 1) / 2.0f) * 0.22f;
-                matrices.translate(0.0, 0.0, zOffset);
+                // Position workpiece items cleanly on anvil top plate:
+                // For 1-4 items: single centered row.
+                // For 5-8 items: 2 neat parallel rows side-by-side.
+                float xOffset;
+                float zOffset;
+                float scale;
+
+                if (total <= 4) {
+                    xOffset = 0.0f;
+                    zOffset = (i - (total - 1) / 2.0f) * 0.20f;
+                    scale = 0.38f;
+                } else {
+                    int itemsPerRow = (total + 1) / 2;
+                    int row = i / itemsPerRow;
+                    int col = i % itemsPerRow;
+                    int countInRow = (row == 0) ? itemsPerRow : (total - itemsPerRow);
+                    xOffset = (row == 0) ? -0.11f : 0.11f;
+                    zOffset = (col - (countInRow - 1) / 2.0f) * 0.18f;
+                    scale = 0.30f;
+                }
+
+                matrices.translate(xOffset, 0.0, zOffset);
 
                 // Lay flat on top of the blueprint stencil
                 matrices.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90.0f));
-                matrices.scale(0.38f, 0.38f, 0.38f);
+                matrices.scale(scale, scale, scale);
 
                 MinecraftClient.getInstance().getItemRenderer().renderItem(
                         stack,

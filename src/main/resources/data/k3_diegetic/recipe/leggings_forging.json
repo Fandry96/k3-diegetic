@@ -1,0 +1,37 @@
+{
+  "type": "k3_diegetic:artisan_crafting",
+  "blueprint": {
+    "item": "k3_diegetic:leggings_blueprint"
+  },
+  "ingredients": [
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    }
+  ],
+  "tool": {
+    "tag": "minecraft:pickaxes"
+  },
+  "required_strikes": 3,
+  "result": {
+    "id": "minecraft:iron_leggings",
+    "count": 1
+  }
+}
